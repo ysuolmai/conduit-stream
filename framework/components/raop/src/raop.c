@@ -1,0 +1,354 @@
+// AirPlay-1 (RAOP) RTSP control server — Phase 2.
+//
+// One FreeRTOS task owns a listening TCP socket on RAOP_RTSP_PORT (5000). It
+// walks a single sender through OPTIONS -> ANNOUNCE -> SETUP -> RECORD, answers
+// the RSA Apple-Challenge, RSA/OAEP-decrypts the AES session key, and binds the
+// three receiver-side UDP sockets. The RTP audio receive/decrypt/decode loop is
+// Phase 3; here we only negotiate the session.
+//
+// Single session (spec §8): the task select()s on the listen socket AND the
+// active client socket at once, so while one session is live a second sender is
+// accepted just long enough to be answered 453 (Not Enough Bandwidth) and closed.
+//
+// Untrusted LAN input (spec §9): the recv buffer is capped; an over-long request
+// gets 400 and the connection is dropped; every parsed length is bounded by the
+// pure rtsp_parser/base64/sdp units.
+
+#include "raop.h"
+
+#include <string.h>
+#include <errno.h>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "lwip/sockets.h"
+#include "lwip/inet.h"
+#include "esp_log.h"
+#include "esp_mac.h"
+
+#include "rtsp_parser.h"
+#include "sdp.h"
+#include "base64.h"
+#include "raop_challenge.h"
+#include "raop_crypto.h"
+#include "rtsp_session.h"
+#include "mdns_service.h"   // RAOP_RTSP_PORT
+
+static const char *TAG = "raop";
+
+#define RAOP_RX_CAP 2048
+
+static TaskHandle_t     s_task     = NULL;
+static volatile bool    s_running  = false;
+static int              s_listen_fd = -1;
+static raop_session_t   s_session;
+
+// ---------------------------------------------------------------------------
+static void send_response(int fd, int status, const char *reason, int cseq,
+                          const char *extra, const char *body, size_t body_len) {
+    char out[1024];
+    int n = rtsp_build_response(out, sizeof(out), status, reason,
+                                cseq < 0 ? 0 : cseq, extra, body, body_len);
+    if (n > 0) {
+        send(fd, out, (size_t)n, 0);
+    } else {
+        ESP_LOGE(TAG, "response build overflow (status %d)", status);
+    }
+}
+
+// Build + send the OPTIONS reply, answering an Apple-Challenge if present.
+static void handle_options(int fd, const rtsp_request_t *req, int cseq) {
+    char extra[512];
+    size_t eo = 0;
+    int n = snprintf(extra + eo, sizeof(extra) - eo,
+                     "Public: ANNOUNCE, SETUP, RECORD, PAUSE, FLUSH, TEARDOWN, "
+                     "OPTIONS, GET_PARAMETER, SET_PARAMETER\r\n");
+    if (n > 0 && (size_t)n < sizeof(extra) - eo) eo += (size_t)n;
+
+    const char *chal = rtsp_header_get(req, "Apple-Challenge");
+    if (chal) {
+        uint8_t cbuf[32];
+        int clen = base64_decode(chal, strlen(chal), cbuf, sizeof(cbuf));
+        if (clen == 16) {
+            uint8_t ip4[4] = {0};
+            struct sockaddr_in local;
+            socklen_t ll = sizeof(local);
+            if (getsockname(fd, (struct sockaddr *)&local, &ll) == 0)
+                memcpy(ip4, &local.sin_addr.s_addr, 4);  // network byte order
+            uint8_t mac[6] = {0};
+            esp_read_mac(mac, ESP_MAC_WIFI_STA);
+
+            uint8_t buf32[RAOP_CHALLENGE_BUF_LEN];
+            if (raop_challenge_assemble(cbuf, 16, ip4, mac, buf32) >= 0) {
+                uint8_t sig[256];
+                size_t siglen = 0;
+                if (raop_crypto_sign_challenge(buf32, sig, sizeof(sig), &siglen) == 0) {
+                    char b64[400];
+                    if (base64_encode(sig, siglen, b64, sizeof(b64)) > 0) {
+                        char *pad = strchr(b64, '=');  // shairport strips the padding
+                        if (pad) *pad = '\0';
+                        int m = snprintf(extra + eo, sizeof(extra) - eo,
+                                         "Apple-Response: %s\r\n", b64);
+                        if (m > 0 && (size_t)m < sizeof(extra) - eo) eo += (size_t)m;
+                    }
+                }
+            }
+        } else {
+            ESP_LOGW(TAG, "Apple-Challenge decoded to %d bytes (want 16)", clen);
+        }
+    }
+    send_response(fd, 200, "OK", cseq, extra, NULL, 0);
+}
+
+// Parse SDP, RSA-decrypt the AES key, store key/iv/fmtp. 200 on success, 400 on
+// a decode/decrypt failure (never crash — §8/§9).
+static void handle_announce(int fd, const rtsp_request_t *req, int cseq) {
+    sdp_media_t m;
+    sdp_parse(req->body ? req->body : "", req->body_len, &m);
+
+    bool ok = true;
+
+    if (m.has_rsaaeskey) {
+        uint8_t enc[256];
+        int el = base64_decode(m.rsaaeskey, strlen(m.rsaaeskey), enc, sizeof(enc));
+        if (el <= 0 || raop_crypto_decrypt_aeskey(enc, (size_t)el, s_session.aeskey) != 0) {
+            ESP_LOGW(TAG, "ANNOUNCE: rsaaeskey decrypt failed");
+            ok = false;
+        }
+    } else {
+        ok = false;  // an encrypted RAOP stream must carry the key
+    }
+
+    if (ok && m.has_aesiv) {
+        int il = base64_decode(m.aesiv, strlen(m.aesiv), s_session.aesiv, sizeof(s_session.aesiv));
+        if (il != 16) {
+            ESP_LOGW(TAG, "ANNOUNCE: aesiv decoded to %d bytes (want 16)", il);
+            ok = false;
+        }
+    }
+
+    if (ok) {
+        s_session.have_key = m.has_rsaaeskey && m.has_aesiv;
+        if (m.has_fmtp) snprintf(s_session.fmtp, sizeof(s_session.fmtp), "%s", m.fmtp);
+        s_session.state = RAOP_ANNOUNCED;
+        ESP_LOGI(TAG, "ANNOUNCE ok: AES key(16) decrypted, iv(16), fmtp=\"%s\"", s_session.fmtp);
+        send_response(fd, 200, "OK", cseq, NULL, NULL, 0);
+    } else {
+        send_response(fd, 400, "Bad Request", cseq, NULL, NULL, 0);
+    }
+}
+
+// Parse the sender's Transport ports, bind our three UDP sockets, return ours.
+static void handle_setup(int fd, const rtsp_request_t *req, int cseq) {
+    const char *t = rtsp_header_get(req, "Transport");
+    if (t) {
+        s_session.client_control_port = rtsp_transport_port(t, "control_port");
+        s_session.client_timing_port  = rtsp_transport_port(t, "timing_port");
+    }
+    if (raop_session_bind_udp(&s_session) != 0) {
+        send_response(fd, 500, "Internal Server Error", cseq, NULL, NULL, 0);
+        return;
+    }
+    s_session.state = RAOP_SETUP;
+
+    char extra[256];
+    snprintf(extra, sizeof(extra),
+             "Transport: RTP/AVP/UDP;unicast;mode=record;server_port=%u;"
+             "control_port=%u;timing_port=%u\r\n"
+             "Session: 1\r\n",
+             s_session.audio_port, s_session.control_port, s_session.timing_port);
+    ESP_LOGI(TAG, "SETUP ok: client control=%d timing=%d; our audio=%u control=%u timing=%u",
+             s_session.client_control_port, s_session.client_timing_port,
+             s_session.audio_port, s_session.control_port, s_session.timing_port);
+    send_response(fd, 200, "OK", cseq, extra, NULL, 0);
+}
+
+// Dispatch one parsed request. Returns true if the connection should be closed
+// afterwards (TEARDOWN).
+static bool dispatch(int fd, const rtsp_request_t *req) {
+    int cseq = rtsp_cseq(req);
+    ESP_LOGI(TAG, "%s (CSeq %d)", req->method, cseq);
+
+    if (strcmp(req->method, "OPTIONS") == 0) {
+        handle_options(fd, req, cseq);
+    } else if (strcmp(req->method, "ANNOUNCE") == 0) {
+        handle_announce(fd, req, cseq);
+    } else if (strcmp(req->method, "SETUP") == 0) {
+        handle_setup(fd, req, cseq);
+    } else if (strcmp(req->method, "RECORD") == 0) {
+        s_session.state = RAOP_RECORDING;
+        ESP_LOGI(TAG, "RECORD: session RECORDING (RTP receive is Phase 3)");
+        send_response(fd, 200, "OK", cseq, "Audio-Latency: 11025\r\n", NULL, 0);
+    } else if (strcmp(req->method, "FLUSH") == 0 ||
+               strcmp(req->method, "PAUSE") == 0 ||
+               strcmp(req->method, "SET_PARAMETER") == 0 ||
+               strcmp(req->method, "GET_PARAMETER") == 0) {
+        // Real flush (Phase 3) and volume/metadata (Phase 5) land later; ack now.
+        send_response(fd, 200, "OK", cseq, NULL, NULL, 0);
+    } else if (strcmp(req->method, "TEARDOWN") == 0) {
+        raop_session_reset(&s_session);
+        send_response(fd, 200, "OK", cseq, NULL, NULL, 0);
+        ESP_LOGI(TAG, "TEARDOWN: session released");
+        return true;
+    } else {
+        send_response(fd, 501, "Not Implemented", cseq, NULL, NULL, 0);
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+static void server_task(void *arg) {
+    (void)arg;
+
+    s_listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (s_listen_fd < 0) {
+        ESP_LOGE(TAG, "listen socket() failed: errno %d", errno);
+        s_task = NULL;
+        vTaskDelete(NULL);
+        return;
+    }
+    int one = 1;
+    setsockopt(s_listen_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(RAOP_RTSP_PORT);
+    if (bind(s_listen_fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        ESP_LOGE(TAG, "bind :%d failed: errno %d", RAOP_RTSP_PORT, errno);
+        close(s_listen_fd);
+        s_listen_fd = -1;
+        s_task = NULL;
+        vTaskDelete(NULL);
+        return;
+    }
+    // Backlog 2: enough to accept a second sender solely to answer it 453.
+    listen(s_listen_fd, 2);
+    ESP_LOGI(TAG, "RTSP listening on :%d", RAOP_RTSP_PORT);
+
+    int    client_fd = -1;
+    char   rx[RAOP_RX_CAP];
+    size_t used = 0;
+
+    while (s_running) {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(s_listen_fd, &rfds);
+        int maxfd = s_listen_fd;
+        if (client_fd >= 0) {
+            FD_SET(client_fd, &rfds);
+            if (client_fd > maxfd) maxfd = client_fd;
+        }
+        struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
+        int r = select(maxfd + 1, &rfds, NULL, NULL, &tv);
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            ESP_LOGE(TAG, "select failed: errno %d", errno);
+            break;
+        }
+        if (r == 0) continue;  // timeout -> re-check s_running
+
+        // New inbound connection.
+        if (FD_ISSET(s_listen_fd, &rfds)) {
+            struct sockaddr_in cli;
+            socklen_t cl = sizeof(cli);
+            int nfd = accept(s_listen_fd, (struct sockaddr *)&cli, &cl);
+            if (nfd >= 0) {
+                if (client_fd >= 0) {
+                    // Single session (spec §8): refuse the second sender.
+                    char busy[128];
+                    int bn = rtsp_build_response(busy, sizeof(busy), 453,
+                                                 "Not Enough Bandwidth", 0, NULL, NULL, 0);
+                    if (bn > 0) send(nfd, busy, (size_t)bn, 0);
+                    close(nfd);
+                    ESP_LOGW(TAG, "second sender refused (453 busy)");
+                } else {
+                    client_fd = nfd;
+                    used = 0;
+                    raop_session_reset(&s_session);
+                    ESP_LOGI(TAG, "sender connected");
+                }
+            }
+        }
+
+        // Data (or EOF) on the active connection.
+        if (client_fd >= 0 && FD_ISSET(client_fd, &rfds)) {
+            if (used >= sizeof(rx)) {
+                // A single request overflowed the buffer: bound untrusted input (§9).
+                ESP_LOGW(TAG, "request exceeds %d bytes -> 400", (int)sizeof(rx));
+                send_response(client_fd, 400, "Bad Request", 0, NULL, NULL, 0);
+                close(client_fd);
+                client_fd = -1;
+                raop_session_reset(&s_session);
+                continue;
+            }
+            int n = recv(client_fd, rx + used, sizeof(rx) - used, 0);
+            if (n <= 0) {
+                // Sender vanished without TEARDOWN (§8): drop + reset.
+                ESP_LOGI(TAG, "sender disconnected");
+                close(client_fd);
+                client_fd = -1;
+                raop_session_reset(&s_session);
+                continue;
+            }
+            used += (size_t)n;
+
+            // Drain every complete pipelined request currently buffered.
+            bool close_conn = false;
+            for (;;) {
+                rtsp_request_t req;
+                if (!rtsp_parse_request(rx, used, &req)) break;  // need more bytes
+                close_conn = dispatch(client_fd, &req);
+                size_t consumed = req.total_len;
+                if (consumed == 0 || consumed > used) consumed = used;
+                memmove(rx, rx + consumed, used - consumed);
+                used -= consumed;
+                if (close_conn) break;
+            }
+            if (close_conn) {
+                close(client_fd);
+                client_fd = -1;
+                // session already reset in the TEARDOWN handler
+            }
+        }
+    }
+
+    if (client_fd >= 0) close(client_fd);
+    if (s_listen_fd >= 0) {
+        close(s_listen_fd);
+        s_listen_fd = -1;
+    }
+    raop_session_reset(&s_session);
+    ESP_LOGI(TAG, "RTSP server stopped");
+    s_task = NULL;
+    vTaskDelete(NULL);
+}
+
+// ---------------------------------------------------------------------------
+void raop_server_start(void) {
+    if (s_task != NULL) {
+        ESP_LOGW(TAG, "raop_server_start: already running");
+        return;
+    }
+    if (raop_crypto_init() != ESP_OK) {
+        ESP_LOGE(TAG, "raop_crypto_init failed; NOT starting RTSP server "
+                      "(cannot answer the Apple-Challenge without the key)");
+        return;
+    }
+    raop_session_reset(&s_session);
+    s_running = true;
+    if (xTaskCreate(server_task, "raop_rtsp", 6144, NULL, 5, &s_task) != pdPASS) {
+        ESP_LOGE(TAG, "xTaskCreate(raop_rtsp) failed");
+        s_running = false;
+        s_task = NULL;
+    }
+}
+
+void raop_server_stop(void) {
+    s_running = false;
+    if (s_listen_fd >= 0) {
+        // Nudge the task out of select()/accept() so it can observe s_running.
+        shutdown(s_listen_fd, SHUT_RDWR);
+    }
+}

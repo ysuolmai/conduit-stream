@@ -1,14 +1,9 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include "audio.h"   // AUDIO_PIN_CORE (public pin contract) lives here now
 
 #define AUDIO_SAMPLE_RATE_HZ 44100
-
-// Core that BOTH the playback (consumer) and producer (diag/decoder) tasks pin
-// to. The SPSC ring buffer has no memory barriers, so its producer and consumer
-// must share a core (single-core context switches are full barriers). See the
-// concurrency precondition in audio_ringbuf.h.
-#define AUDIO_PIN_CORE 1
 
 #ifdef __cplusplus
 extern "C" {

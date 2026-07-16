@@ -2,12 +2,14 @@
 // so it is unit-testable on the host. Storage is caller-owned (target: PSRAM;
 // host test: a static array), which keeps this file allocator-free.
 //
-// Concurrency precondition: the index publish/observe here uses plain size_t
-// with NO memory barriers. Safe only when producer and consumer are memory-
-// synchronized by the caller. On the ESP32-S3 this means pinning the producer
-// and consumer tasks to the SAME core (a single-core context switch is a full
-// barrier). Do not run them on different cores without adding acquire/release
-// on head/tail.
+// Concurrency precondition: head/tail are `volatile` so the compiler cannot cache
+// a producer- or consumer-owned index in a register across the publish/observe
+// (that would let the drain task read a stale head, or the producer a stale tail).
+// `volatile` closes only the COMPILER-reordering hole — it is NOT a hardware
+// barrier. Correctness therefore still requires the producer and consumer to be
+// memory-synchronized by the caller: on the ESP32-S3, pin BOTH tasks to the SAME
+// core (audio_producer_core()); a single-core context switch is a full barrier.
+// Cross-core use would need _Atomic head/tail with acquire/release (future work).
 #pragma once
 
 #include <stdbool.h>
@@ -18,8 +20,8 @@
 typedef struct {
     int16_t *storage;      // caller-owned, capacity_frames * 2 int16_t
     size_t   capacity;     // total frame slots (usable = capacity - 1; one reserved for full/empty)
-    size_t   head;         // producer writes here (frame index)
-    size_t   tail;         // consumer reads here (frame index)
+    volatile size_t head;  // producer publishes here (frame index); volatile: no compiler caching
+    volatile size_t tail;  // consumer publishes here (frame index); volatile: no compiler caching
 } audio_ringbuf_t;
 
 // storage must hold (capacity_frames * 2) int16_t. Usable capacity is

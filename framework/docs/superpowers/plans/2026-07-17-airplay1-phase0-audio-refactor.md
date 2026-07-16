@@ -347,10 +347,24 @@ git commit -m "feat(audio): I2S std TX wrapper lifted from main.cpp"
 ## Task 3: Playback task + public API + component wiring
 
 **Files:**
+- Modify: `framework/components/audio/src/audio_i2s.h` (add `AUDIO_PIN_CORE`)
 - Create: `framework/components/audio/include/audio.h`
 - Create: `framework/components/audio/src/audio_playback.c`
+- Create: `framework/components/audio/src/audio_playback.h`
 - Create: `framework/components/audio/src/audio.c`
 - Modify: `framework/components/audio/CMakeLists.txt`
+
+- [ ] **Step 0: Add the shared core-affinity constant to `audio_i2s.h`**
+
+Add this line to `framework/components/audio/src/audio_i2s.h`, right after `#define AUDIO_SAMPLE_RATE_HZ 44100`:
+
+```c
+// Core that BOTH the playback (consumer) and producer (diag/decoder) tasks pin
+// to. The SPSC ring buffer has no memory barriers, so its producer and consumer
+// must share a core (single-core context switches are full barriers). See the
+// concurrency precondition in audio_ringbuf.h.
+#define AUDIO_PIN_CORE 1
+```
 
 - [ ] **Step 1: Write the public API header**
 
@@ -459,9 +473,14 @@ void audio_init(void) {
     }
     audio_ringbuf_init(&s_ring, storage, RING_CAPACITY_FRAMES);
 
-    xTaskCreate(audio_playback_task, "playback", 4096, &s_ring, 5, NULL);
-    ESP_LOGI(TAG, "audio: ring=%u frames (~2s PSRAM), playback task up",
-             RING_CAPACITY_FRAMES);
+    // Pin the consumer (playback) to the same core as the producer (diag/decoder,
+    // AUDIO_PIN_CORE). The SPSC ring's plain-size_t indices have no memory
+    // barriers, so producer and consumer MUST be single-core-synchronized;
+    // co-pinning makes every context switch between them a full barrier.
+    xTaskCreatePinnedToCore(audio_playback_task, "playback", 4096, &s_ring, 5,
+                            NULL, AUDIO_PIN_CORE);
+    ESP_LOGI(TAG, "audio: ring=%u frames (~2s PSRAM), playback task up on core %d",
+             RING_CAPACITY_FRAMES, AUDIO_PIN_CORE);
 }
 
 size_t audio_play_pcm(const int16_t *frames, size_t n_frames) {
@@ -551,7 +570,10 @@ static void diag_tone_task(void *arg) {
 }
 
 void audio_diag_tone_start(void) {
-    xTaskCreate(diag_tone_task, "diag_tone", 4096, NULL, 4, NULL);
+    // Pinned to AUDIO_PIN_CORE — same core as the playback consumer, so the
+    // SPSC ring stays memory-synchronized (see audio_ringbuf.h precondition).
+    xTaskCreatePinnedToCore(diag_tone_task, "diag_tone", 4096, NULL, 4,
+                            NULL, AUDIO_PIN_CORE);
 }
 ```
 

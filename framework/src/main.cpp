@@ -25,7 +25,6 @@
 // We deliberately do NOT wire MCLK: gpio_cfg.mclk = I2S_GPIO_UNUSED. The PCM5102A
 // synthesizes its own clock from BCLK via its internal PLL (that's why SCK->GND).
 
-#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -40,23 +39,9 @@
 #include "esp_psram.h"
 #endif
 
-#include "driver/i2s_std.h"
+#include "audio.h"
 
 static const char *TAG = "conduit";
-
-// ---- Audio config -----------------------------------------------------------
-#define I2S_DOUT_GPIO   GPIO_NUM_5   // -> PCM5102A DIN
-#define I2S_BCLK_GPIO   GPIO_NUM_6   // -> PCM5102A BCK
-#define I2S_LRCK_GPIO   GPIO_NUM_7   // -> PCM5102A LRCK (LCK/WS)
-
-#define SAMPLE_RATE_HZ  44100
-#define TONE_HZ         440.0f
-#define AMPLITUDE       (0.60f * 32767.0f)  // headroom below full scale, no clip
-
-// Frames per I2S write. One "frame" = one left sample + one right sample.
-#define FRAMES_PER_CHUNK 256
-
-static i2s_chan_handle_t s_tx_chan = NULL;
 
 // -----------------------------------------------------------------------------
 static void log_boot_banner(void)
@@ -99,78 +84,10 @@ static void log_boot_banner(void)
 }
 
 // -----------------------------------------------------------------------------
-static void i2s_init(void)
-{
-    // Allocate a TX channel. I2S_NUM_AUTO lets the driver pick a free port.
-    i2s_chan_config_t chan_cfg =
-        I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
-    ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &s_tx_chan, NULL));
-
-    // Standard (Philips) I2S. 16-bit stereo is plenty for a test tone and keeps
-    // the buffer math trivial. Philips format lines up with the PCM5102A when its
-    // FMT config pad is set Low (the default on most breakouts).
-    i2s_std_config_t std_cfg = {
-        .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE_HZ),
-        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
-                        I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
-        .gpio_cfg = {
-            .mclk = I2S_GPIO_UNUSED,   // no MCLK wired -> PCM5102A uses SCK->GND PLL
-            .bclk = I2S_BCLK_GPIO,
-            .ws   = I2S_LRCK_GPIO,
-            .dout = I2S_DOUT_GPIO,
-            .din  = I2S_GPIO_UNUSED,
-            .invert_flags = {
-                .mclk_inv = false,
-                .bclk_inv = false,
-                .ws_inv   = false,
-            },
-        },
-    };
-    ESP_ERROR_CHECK(i2s_channel_init_std_mode(s_tx_chan, &std_cfg));
-    ESP_ERROR_CHECK(i2s_channel_enable(s_tx_chan));
-
-    ESP_LOGI(TAG, "i2s: std TX up @ %d Hz, 16-bit stereo "
-                  "(BCLK=%d, LRCK=%d, DOUT=%d, MCLK=unused)",
-             SAMPLE_RATE_HZ, I2S_BCLK_GPIO, I2S_LRCK_GPIO, I2S_DOUT_GPIO);
-}
-
-// -----------------------------------------------------------------------------
-// Continuous-phase sine. We keep a running phase across chunks so there is never
-// a discontinuity at the buffer boundary (a per-buffer reset would click, since
-// 44100/440 is not a whole number of samples).
-static void tone_task(void *arg)
-{
-    static int16_t buf[FRAMES_PER_CHUNK * 2];  // interleaved L,R
-    const float phase_inc = 2.0f * (float) M_PI * TONE_HZ / (float) SAMPLE_RATE_HZ;
-    float phase = 0.0f;
-
-    ESP_LOGI(TAG, "tone: emitting %.0f Hz sine (both channels)", TONE_HZ);
-
-    while (true) {
-        for (int i = 0; i < FRAMES_PER_CHUNK; ++i) {
-            int16_t s = (int16_t) (AMPLITUDE * sinf(phase));
-            buf[2 * i]     = s;   // left
-            buf[2 * i + 1] = s;   // right
-            phase += phase_inc;
-            if (phase >= 2.0f * (float) M_PI) {
-                phase -= 2.0f * (float) M_PI;
-            }
-        }
-        size_t written = 0;
-        esp_err_t err = i2s_channel_write(s_tx_chan, buf, sizeof(buf),
-                                          &written, portMAX_DELAY);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "i2s write failed: %s", esp_err_to_name(err));
-            vTaskDelay(pdMS_TO_TICKS(100));
-        }
-    }
-}
-
-// -----------------------------------------------------------------------------
 extern "C" void app_main(void)
 {
     log_boot_banner();
-    i2s_init();
-    xTaskCreate(tone_task, "tone", 4096, NULL, 5, NULL);
+    audio_init();               // I2S + PSRAM ring + playback task
+    audio_diag_tone_start();    // 440 Hz through the new path (diagnostic)
     ESP_LOGI(TAG, "boot complete. if the Aura is silent, check SCK->GND and XSMT->3.3V.");
 }

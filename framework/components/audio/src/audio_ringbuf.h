@@ -1,6 +1,13 @@
 // Single-producer / single-consumer PCM ring buffer. Pure C, no ESP-IDF deps,
 // so it is unit-testable on the host. Storage is caller-owned (target: PSRAM;
 // host test: a static array), which keeps this file allocator-free.
+//
+// Concurrency precondition: the index publish/observe here uses plain size_t
+// with NO memory barriers. Safe only when producer and consumer are memory-
+// synchronized by the caller. On the ESP32-S3 this means pinning the producer
+// and consumer tasks to the SAME core (a single-core context switch is a full
+// barrier). Do not run them on different cores without adding acquire/release
+// on head/tail.
 #pragma once
 
 #include <stdbool.h>
@@ -10,7 +17,7 @@
 // One frame = one stereo sample pair (L,R) = 2 * int16_t.
 typedef struct {
     int16_t *storage;      // caller-owned, capacity_frames * 2 int16_t
-    size_t   capacity;     // usable frames (one slot is reserved to disambiguate full/empty)
+    size_t   capacity;     // total frame slots (usable = capacity - 1; one reserved for full/empty)
     size_t   head;         // producer writes here (frame index)
     size_t   tail;         // consumer reads here (frame index)
 } audio_ringbuf_t;

@@ -1,5 +1,4 @@
 #include "audio_ringbuf.h"
-#include <string.h>
 
 void audio_ringbuf_init(audio_ringbuf_t *rb, int16_t *storage, size_t capacity_frames) {
     rb->storage  = storage;

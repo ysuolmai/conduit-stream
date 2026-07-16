@@ -8,5 +8,11 @@
 # Keep sdkconfig.defaults tracked; ignore the merged per-env file.
 sdkconfig.esp32-s3-n16r8
 
+# ESP-IDF component manager: downloaded managed components + resolved lockfile.
+# The dependency is declared in each component's idf_component.yml; the manager
+# re-downloads these on build, so they are not vendored into the repo.
+framework/managed_components/
+framework/dependencies.lock
+
 # Local Claude Code settings (machine-specific)
 .claude/settings.local.json*

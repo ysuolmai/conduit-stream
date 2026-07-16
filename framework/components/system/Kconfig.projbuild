@@ -1,0 +1,25 @@
+menu "Conduit Stream Configuration"
+
+    config CONDUIT_WIFI_SSID
+        string "Wi-Fi SSID (seed for NVS on first boot)"
+        default ""
+        help
+            2.4 GHz SSID seeded into NVS namespace "conduit" on first boot.
+            Left empty means "no creds": the device logs a clear message and
+            sits idle (no boot-loop). Change later in NVS without reflashing.
+
+    config CONDUIT_WIFI_PASSWORD
+        string "Wi-Fi password (seed for NVS on first boot)"
+        default ""
+        help
+            WPA2 password seeded into NVS on first boot. Empty = open network
+            or "no creds" (see SSID).
+
+    config CONDUIT_DEVICE_NAME
+        string "Speaker name shown in the AirPlay menu"
+        default "Conduit"
+        help
+            Seeds the "name" key in NVS; used in the RAOP instance name
+            "<deviceid>@<name>".
+
+endmenu

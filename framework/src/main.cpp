@@ -41,6 +41,7 @@
 #include "system_config.h"
 #include "wifi.h"
 #include "mdns_service.h"
+#include "raop.h"
 
 static const char *TAG = "conduit";
 
@@ -90,6 +91,9 @@ static void log_boot_banner(void)
 static void on_got_ip(void)
 {
     mdns_advertise_raop("conduit", system_config_get_instance_name(), RAOP_RTSP_PORT);
+    // Phase 2: now actually man the advertised RTSP port so a sender can connect
+    // and negotiate (OPTIONS -> ANNOUNCE -> SETUP -> RECORD). No audio yet (Phase 3).
+    raop_server_start();
 }
 
 // -----------------------------------------------------------------------------

@@ -5,7 +5,11 @@ server** so a real iPhone/Mac connects and negotiates a session:
 `OPTIONS → ANNOUNCE → SETUP → RECORD`. **Phase 3 makes it audible**: on `RECORD`
 an RTP receive task reads the bound audio UDP socket, AES-128-CBC-decrypts each
 packet, ALAC-decodes it to PCM, and feeds `audio_play_pcm()` — the first AirPlay
-audio out the DAC.
+audio out the DAC. **Phase 4 makes it robust under real Wi-Fi loss**: a
+seq-indexed reorder/jitter buffer replaces arrival-order decode, gaps trigger RTP
+**retransmit** on the control socket, the **timing** channel is serviced
+(receiver-initiated) so a real sender never tears us down, and a free-run **drift**
+watermark keeps a multi-hour session from slowly underrunning.
 
 ## RTSP state machine
 
@@ -14,8 +18,8 @@ audio out the DAC.
 | `OPTIONS` | `200 OK` + `Public:` list. If an `Apple-Challenge` header is present, RSA-sign it and return `Apple-Response`. |
 | `ANNOUNCE` | Parse SDP; RSA/OAEP-decrypt `a=rsaaeskey` → 16-byte AES key; base64-decode `a=aesiv` → 16-byte IV; keep `a=fmtp` (ALAC config). `state = ANNOUNCED`. |
 | `SETUP` | Parse the sender's `control_port` / `timing_port` from `Transport`; bind our three UDP sockets (audio/control/timing) to ephemeral ports; return them in the `Transport` response. `state = SETUP`. |
-| `RECORD` | **Phase 3:** require key + `fmtp` (else `400`); **stop the diag tone**, then start the RTP decode task (`raop_rtp_start`). `state = RECORDING`. Idempotent on a second `RECORD`. |
-| `FLUSH` / `PAUSE` | `200 OK` ack. FLUSH affects buffering only (jitter buffer is Phase 4) and does **not** tear the decoder down. |
+| `RECORD` | Require key + `fmtp` (else `400`); **stop the diag tone**, then start the RTP decode task (`raop_rtp_start`, now a 3-socket select loop). `state = RECORDING`. Idempotent on a second `RECORD`. |
+| `FLUSH` / `PAUSE` | `200 OK` ack. FLUSH affects buffering only and does **not** tear the decoder down. In Phase 4 the free-run reorder buffer re-anchors on the first packet after the flush gap (a precise `RTP-Info` re-anchor is a noted follow-up). |
 | `SET_PARAMETER` / `GET_PARAMETER` | `200 OK` ack (volume/metadata → Phase 5). |
 | `TEARDOWN` | Stop the RTP decoder, **resume the diag tone**, close the UDP sockets, reset the session to `IDLE`, release the single-session lock. |
 | _unknown_ | `501 Not Implemented`. |
@@ -24,26 +28,66 @@ Every response echoes the request's `CSeq`. Every abnormal exit (idle-timeout,
 disconnect, buffer overflow, server stop) routes through `session_teardown_full()`,
 which performs the same decoder-stop + tone-resume + reset.
 
-## Phase 3 — RTP audio receive path
+## Phase 4 — RTP audio receive path (reorder + retransmit + timing + drift)
 
-`raop_rtp.{h,c}` owns a FreeRTOS task (pinned to `audio_producer_core()`, prio
-above the diag tone) that per datagram:
+`raop_rtp.{h,c}` owns ONE FreeRTOS task (pinned to `audio_producer_core()`, prio
+above the diag tone) that `select()`s over the session's **three** UDP sockets and
+keeps a single producer feeding `audio_play_pcm()`.
 
-1. `rtp_parse()` the 12-byte header; dispatch on `packet[1] & 0x7f`. Only the audio
-   type (`0x60`) is handled — sync/timing/resend are Phase 4+.
-2. `aes_frame_split()` the payload: the largest multiple of 16 is ciphertext, the
+**Reorder-before-decode (the key decision).** Each RAOP audio packet is one
+independently-decodable ALAC frame (no cross-frame decoder state), and a resend
+response is itself an encrypted audio packet. So we buffer the **encrypted** payload
+keyed by 16-bit RTP sequence (`rtp_reorder`, PSRAM, 256-packet ≈ 2 s window) and
+drain in seq order → decrypt → decode → feed. Late / out-of-order / recovered
+packets slot into place and flow through the **single** decode path — no duplicate
+"decode a recovered packet" branch (spec §6c/§5c).
+
+Per drained packet:
+
+1. `aes_frame_split()` the payload: the largest multiple of 16 is ciphertext, the
    trailing `len % 16` bytes are **plaintext** copied verbatim.
-3. AES-128-CBC-decrypt the ciphertext with the session key, **resetting the IV to
-   the constant session IV for every packet** (CBC chains within a packet, never
-   across). PSA Crypto: `psa_cipher_decrypt_setup(PSA_ALG_CBC_NO_PADDING)` +
-   `set_iv` + `update` + `finish`.
-4. `alac_decode_frame()` the reconstructed ALAC frame → interleaved LE int16 stereo
-   PCM. (Decoder built from `a=fmtp` via `alac_cfg_from_fmtp`; see `components/alac`.)
-5. Feed `audio_play_pcm()` with backpressure (yield+retry on a full ring).
+2. AES-128-CBC-decrypt with the session key, **resetting the IV to the constant
+   session IV for every packet** (CBC chains within a packet, never across). PSA
+   Crypto: `decrypt_setup(PSA_ALG_CBC_NO_PADDING)` + `set_iv` + `update` + `finish`.
+3. `alac_decode_frame()` → interleaved LE int16 stereo PCM (decoder built from
+   `a=fmtp` via `alac_cfg_from_fmtp`; see `components/alac`).
+4. Feed `audio_play_pcm()` with backpressure (yield+retry on a full ring).
 
-Phase 3 free-runs: packets decode in arrival order straight into the PCM ring — no
-jitter buffer / reorder / timing / sync / retransmit (all Phase 4). Wire formats
-match shairport-sync `rtp.c`/`player.c` (see the plan and `research-phase3-5.md`).
+**Gap → conceal, never stall.** If the front seq is missing but still inside the
+hold window (`RTP_POP_WAIT`), the drain stops and waits (retransmit has time to
+land). Once the write head runs past the hold budget (`RTP_POP_CONCEAL`), we give up
+on the hole, push **one frame of silence** to preserve stream duration, and advance
+— an unfillable gap is concealed, not stalled forever. All seq math is mod-2¹⁶ so it
+survives 16-bit wraparound.
+
+**Retransmit (control socket).** On a front gap, `rtp_reorder_gap()` gives
+`[first, count]`; `rtp_resend_build()` emits the 8-byte `0x80 0xD5 htons(1)
+htons(first) htons(count)` request to the **sender's** control port (throttled to
+≤ every 30 ms per gap). A `0xD6` response is unwrapped (`rtp_resend_unwrap`: strip
+the 4-byte wrapper, the inner bytes are a normal audio packet) and injected back
+into the reorder buffer by seq.
+
+**Timing (receiver-initiated).** Verified against shairport `rtp_timing_sender` /
+`rtp_timing_receiver`: **the receiver is the initiator.** We periodically (~3 s) send
+32-byte `0xD2` requests to the sender's timing port and consume the `0xD3` responses,
+which we **discard** — we free-run (no clock discipline, spec §5c). A documented
+defensive belt answers an inbound `0xD2` with a `0xD3` for non-standard senders that
+poll us; standard senders never do. **The task brief's "reply to 0x53 requests"
+premise was inverted** — the sender never sends the receiver a timing request.
+
+**Sync (`0xD4`)** on the control socket is logged-and-dropped (free-run).
+
+The peer IP is learned from the first audio datagram's source (shairport does the
+same); resend/timing requests are addressed to that IP + the sender's control/timing
+ports from the SETUP `Transport` header. Wire formats match shairport-sync `rtp.c`
+byte-for-byte (see the Phase 4 plan and `research-phase3-5.md`).
+
+**Free-run drift (spec §6f).** Lives in `components/audio` (`audio_drift` +
+`audio_playback`): once per drain cycle, if the PCM ring's fill has crossed a
+generous high/low watermark (3/4 and 1/4 of capacity), drop or duplicate **one
+frame** (~23 µs, inaudible) so sender/DAC ppm mismatch never slowly underruns a
+multi-hour session. `avail == 0` is a true underrun (the silence path owns it), not
+drift.
 
 ### Single-producer arbitration (correctness-critical)
 
@@ -66,7 +110,11 @@ Everything host-testable lives in ESP-IDF-free, mbedTLS-free `.c` files that are
 - `raop_challenge.{h,c}` — the 32-byte pre-signature buffer layout → `test/test_raop_challenge`
 - `rtp_parser.{h,c}` — 12-byte RTP header parse + type dispatch → `test/test_rtp_parser`
 - `aes_frame.{h,c}` — the AES-CBC ciphertext/plaintext-tail split → `test/test_aes_frame`
+- `rtp_reorder.{h,c}` — seq-indexed reorder / gap-detect / conceal (16-bit wrap) → `test/test_rtp_reorder`
+- `rtp_resend.{h,c}` — 8-byte `0xD5` resend-request builder + `0xD6` response unwrap → `test/test_rtp_resend`
+- `rtp_timing.{h,c}` — `0xD2`/`0xD3` timing codec + NTP64 pack/unpack → `test/test_rtp_timing`
 - (`alac_config.{h,c}` in `components/alac` — `a=fmtp` → ALAC config → `test/test_alac_config`)
+- (`audio_drift.{h,c}` in `components/audio` — free-run drift drop/dup decision → `test/test_audio_drift`)
 
 Target-build-only glue (sockets / PSA / MAC / FreeRTOS / decoder):
 
@@ -74,7 +122,7 @@ Target-build-only glue (sockets / PSA / MAC / FreeRTOS / decoder):
 - `rtsp_session.{h,c}` — per-session state + the three UDP sockets.
 - `raop_crypto.{h,c}` — PSA Crypto (mbedTLS 4.0) key import, challenge sign, AES-key decrypt.
 - `raop_key.c` — the embedded RAOP RSA private key.
-- `raop_rtp.{h,c}` — Phase 3 RTP receive/decrypt/decode task + diag-tone handoff.
+- `raop_rtp.{h,c}` — Phase 4 RTP receive task: 3-socket select loop, seq-ordered decode, retransmit, receiver-initiated timing, diag-tone handoff.
 
 ## Crypto — mbedTLS 4.0 PSA Crypto (differs from shairport's low-level RSA)
 

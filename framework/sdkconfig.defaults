@@ -1,0 +1,25 @@
+# Conduit Stream - ESP-IDF default config for the ESP32-S3 N16R8.
+# PlatformIO/idf.py apply these on a clean build. Edit via `pio run -t menuconfig`
+# (or `idf.py menuconfig`) if you need to change them later.
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# --- 16 MB flash, QIO @ 80 MHz ---
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# --- 8 MB OCTAL PSRAM @ 80 MHz (this is the "R8" half of N16R8) ---
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# --- Partition table ---
+# Managed by PlatformIO via `board_build.partitions = partitions.csv`, which sets
+# CONFIG_PARTITION_TABLE_CUSTOM for us. Don't hard-code the filename here too.
+
+# --- Console: route logging to the built-in USB Serial/JTAG so the boot banner
+#     and logs appear on the USB-C port of this native-USB S3 (UART0 pins aren't
+#     wired to anything). Set via Kconfig here, NOT as a -D build flag. ---
+CONFIG_ESP_CONSOLE_UART_DEFAULT=n
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

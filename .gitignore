@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# PlatformIO build output + downloaded toolchains
+.pio/
+
+# PlatformIO-generated sdkconfig (regenerated from sdkconfig.defaults).
+# Keep sdkconfig.defaults tracked; ignore the merged per-env file.
+sdkconfig.esp32-s3-n16r8
+
+# Local Claude Code settings (machine-specific)
+.claude/settings.local.json*

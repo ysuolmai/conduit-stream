@@ -502,9 +502,14 @@ idf_component_register(
          "src/audio_diag.c"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "src"
-    PRIV_REQUIRES driver esp_psram
+    PRIV_REQUIRES driver esp_driver_i2s esp_psram
 )
 ```
+
+> Note: `esp_driver_i2s` is required because ESP-IDF 6 split the I2S driver
+> (`driver/i2s_std.h`) out of the `driver` meta-component. After changing a
+> component's `PRIV_REQUIRES`, PlatformIO may reuse a stale CMake cache — wipe
+> `framework/.pio/build/esp32-s3-n16r8` to force a reconfigure before rebuilding.
 
 - [ ] **Step 6: Commit** (compiles after Task 4 adds `audio_diag.c`; build verified in Task 5)
 
@@ -620,7 +625,7 @@ extern "C" void app_main(void)
 
 - [ ] **Step 2: Build for the target**
 
-Run: `cd framework && ~/.platformio/penv/bin/pio run`
+Run: `cd framework && ~/.platformio/penv/bin/pio run -e esp32-s3-n16r8`
 Expected: `[SUCCESS]`. If linking complains about an undefined `audio_*` symbol, confirm `components/audio/CMakeLists.txt` lists all five sources (Task 3 Step 5) and that `src/` code no longer references the removed `i2s_*`/`tone_*` symbols.
 
 - [ ] **Step 3: Commit**
@@ -639,7 +644,7 @@ git commit -m "refactor(main): drive audio via the audio component, keep boot ba
 
 - [ ] **Step 1: Flash the refactored firmware**
 
-Run: `cd framework && ~/.platformio/penv/bin/pio run -t upload --upload-port $(ls /dev/cu.usbmodem* | grep -v SN234567892 | head -1)`
+Run: `cd framework && ~/.platformio/penv/bin/pio run -e esp32-s3-n16r8 -t upload --upload-port $(ls /dev/cu.usbmodem* | grep -v SN234567892 | head -1)`
 Expected: `[SUCCESS]`, `Hash of data verified.`, `Hard resetting via RTS pin...`.
 If it fails with `No serial data received`, hold BOOT, tap RESET, release BOOT, and retry (native-USB download mode).
 

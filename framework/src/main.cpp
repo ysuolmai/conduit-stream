@@ -25,9 +25,6 @@
 // We deliberately do NOT wire MCLK: gpio_cfg.mclk = I2S_GPIO_UNUSED. The PCM5102A
 // synthesizes its own clock from BCLK via its internal PLL (that's why SCK->GND).
 
-#include <stdio.h>
-#include <string.h>
-
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 

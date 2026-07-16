@@ -4,6 +4,7 @@ idf_component_register(
          "src/audio_i2s.c"
          "src/audio_ringbuf.c"
          "src/audio_playback.c"
+         "src/audio_drift.c"
          "src/audio_diag.c"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "src"

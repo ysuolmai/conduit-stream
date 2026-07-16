@@ -11,10 +11,18 @@ interface (the diagnostic 440 Hz tone is just another producer).
 - `src/audio_ringbuf.{h,c}` — pure-C single-producer/single-consumer PCM ring buffer
   (host-unit-tested via `pio test -e native`). Indices have no memory barriers, so
   producer and consumer MUST share a core — see the precondition in the header.
+  Phase 4 adds two consumer-side primitives, `audio_ringbuf_drop()` /
+  `audio_ringbuf_last_frame()`, used by the drift step (tail-only / index-only, so
+  the SPSC contract is preserved).
 - `src/audio_i2s.{h,c}` — I2S std-mode TX wrapper (44.1 kHz / 16-bit stereo, PCM5102A
   pins). Defines `AUDIO_SAMPLE_RATE_HZ` and `AUDIO_PIN_CORE`.
+- `src/audio_drift.{h,c}` — pure free-run drift watermark decision (spec §6f),
+  host-unit-tested (`test/test_audio_drift`). Above the high / below the low mark
+  (3/4 and 1/4 of ring capacity) it returns DROP / DUP; `avail == 0` is NONE (the
+  underrun silence path owns it, not drift).
 - `src/audio_playback.{h,c}` — playback task: drains the ring into I2S, writes silence
-  on underrun.
+  on underrun, and applies at most one single-frame drift DROP/DUP (~23 µs) per drain
+  cycle so a multi-hour session never slowly underruns from sender/DAC ppm mismatch.
 - `src/audio.c` — `audio_init()` (brings up I2S, allocates the ~2 s PSRAM ring, starts
   the playback task pinned to `AUDIO_PIN_CORE`) and `audio_play_pcm()`.
 - `src/audio_diag.c` — 440 Hz diagnostic sine pushed through `audio_play_pcm()`, proving

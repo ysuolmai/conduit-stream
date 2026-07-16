@@ -41,3 +41,13 @@ size_t audio_ringbuf_write(audio_ringbuf_t *rb, const int16_t *frames, size_t n_
 // Read up to n_frames into `out`. Returns frames actually read
 // (< n_frames on underrun, 0 when empty).
 size_t audio_ringbuf_read(audio_ringbuf_t *rb, int16_t *out, size_t n_frames);
+
+// Discard up to n readable frames without emitting them (drift DROP, spec §6f).
+// Returns frames dropped (< n on underrun). Consumer-side: advances tail only, so
+// the SPSC contract is preserved (only the drain task may call this).
+size_t audio_ringbuf_drop(audio_ringbuf_t *rb, size_t n);
+
+// Copy the most recently readable frame into out[2] (drift DUP source). Returns
+// false if empty. Does NOT advance tail. Consumer-side: reads head-1 without
+// touching either index.
+bool   audio_ringbuf_last_frame(const audio_ringbuf_t *rb, int16_t out[2]);

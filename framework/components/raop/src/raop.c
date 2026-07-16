@@ -13,6 +13,12 @@
 // Untrusted LAN input (spec §9): the recv buffer is capped; an over-long request
 // gets 400 and the connection is dropped; every parsed length is bounded by the
 // pure rtsp_parser/base64/sdp units.
+//
+// Dead/silent peer (spec §8): the accepted client socket carries SO_KEEPALIVE +
+// SO_RCVTIMEO, and the task tracks last-activity so a sender that vanishes without
+// TEARDOWN (out of Wi-Fi range / crash) — or any LAN peer that connects to :5000
+// and then says nothing — is torn down after RAOP_CLIENT_IDLE_MS, freeing the
+// single-session lock instead of holding it until reboot.
 
 #include "raop.h"
 
@@ -37,6 +43,12 @@
 static const char *TAG = "raop";
 
 #define RAOP_RX_CAP 2048
+
+// Reclaim the single-session lock from a peer that stops talking without TEARDOWN
+// (spec §8 dead-RTSP detection; §9 unauthenticated-LAN DoS defense). Generous
+// enough to never interrupt a real OPTIONS->ANNOUNCE->SETUP->RECORD negotiation
+// (which completes in well under a second), yet bounded so the slot always frees.
+#define RAOP_CLIENT_IDLE_MS 30000
 
 static TaskHandle_t     s_task     = NULL;
 static volatile bool    s_running  = false;
@@ -196,6 +208,31 @@ static bool dispatch(int fd, const rtsp_request_t *req) {
     return false;
 }
 
+// Harden an accepted RTSP client socket against a vanished/silent peer (spec §8/§9).
+// The loop's last-activity timeout is the primary reclaim (it fires even for a peer
+// that never sends a byte, since select() never marks such a fd readable); these
+// socket options are defense-in-depth: SO_RCVTIMEO caps any recv() we do make, and
+// TCP keepalive probes let lwip surface a silently-dead peer as a recv() error.
+static void configure_client_socket(int fd) {
+    struct timeval rcv = { .tv_sec = RAOP_CLIENT_IDLE_MS / 1000, .tv_usec = 0 };
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rcv, sizeof(rcv));
+
+    int one = 1;
+    setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one));
+#ifdef TCP_KEEPIDLE
+    int idle = 10;   // begin probing after 10 s of silence
+    setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+#endif
+#ifdef TCP_KEEPINTVL
+    int intvl = 5;   // probe every 5 s
+    setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+#endif
+#ifdef TCP_KEEPCNT
+    int cnt = 3;     // drop after 3 unanswered probes
+    setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
+#endif
+}
+
 // ---------------------------------------------------------------------------
 static void server_task(void *arg) {
     (void)arg;
@@ -227,9 +264,10 @@ static void server_task(void *arg) {
     listen(s_listen_fd, 2);
     ESP_LOGI(TAG, "RTSP listening on :%d", RAOP_RTSP_PORT);
 
-    int    client_fd = -1;
-    char   rx[RAOP_RX_CAP];
-    size_t used = 0;
+    int       client_fd = -1;
+    char      rx[RAOP_RX_CAP];
+    size_t    used = 0;
+    TickType_t last_activity = 0;   // tick of the last accept/recv on client_fd
 
     while (s_running) {
         fd_set rfds;
@@ -247,6 +285,20 @@ static void server_task(void *arg) {
             ESP_LOGE(TAG, "select failed: errno %d", errno);
             break;
         }
+        // Reclaim the single-session lock from a peer that went silent without
+        // TEARDOWN — out of range, crashed, or a LAN peer that connected to :5000
+        // and then sent nothing (spec §8 dead-RTSP detection; §9 DoS defense).
+        // Checked on every wake, including the select() timeout, so a peer that
+        // never triggers readability is still dropped.
+        if (client_fd >= 0 &&
+            (xTaskGetTickCount() - last_activity) >= pdMS_TO_TICKS(RAOP_CLIENT_IDLE_MS)) {
+            ESP_LOGW(TAG, "RTSP client idle > %d ms -> teardown", RAOP_CLIENT_IDLE_MS);
+            close(client_fd);
+            client_fd = -1;
+            raop_session_reset(&s_session);
+            continue;
+        }
+
         if (r == 0) continue;  // timeout -> re-check s_running
 
         // New inbound connection.
@@ -266,6 +318,8 @@ static void server_task(void *arg) {
                 } else {
                     client_fd = nfd;
                     used = 0;
+                    last_activity = xTaskGetTickCount();
+                    configure_client_socket(client_fd);
                     raop_session_reset(&s_session);
                     ESP_LOGI(TAG, "sender connected");
                 }
@@ -293,6 +347,7 @@ static void server_task(void *arg) {
                 continue;
             }
             used += (size_t)n;
+            last_activity = xTaskGetTickCount();
 
             // Drain every complete pipelined request currently buffered.
             bool close_conn = false;

@@ -38,6 +38,8 @@
 #include "raop_challenge.h"
 #include "raop_crypto.h"
 #include "rtsp_session.h"
+#include "raop_rtp.h"       // Phase 3 RTP receive/decrypt/decode task
+#include "audio.h"          // diag-tone handoff (single-producer arbitration)
 #include "mdns_service.h"   // RAOP_RTSP_PORT
 
 static const char *TAG = "raop";
@@ -54,6 +56,18 @@ static TaskHandle_t     s_task     = NULL;
 static volatile bool    s_running  = false;
 static int              s_listen_fd = -1;
 static raop_session_t   s_session;
+
+// Reverse the RECORD handoff and clear the session. If a stream is live, stop the
+// RTP decoder producer and resume the pre-stream diag tone (single-producer
+// arbitration: exactly one producer feeds audio_play_pcm() at all times). The
+// stop joins the decode task BEFORE raop_session_reset() closes the UDP sockets
+// it read from — order matters. Idempotent; a no-op when not streaming.
+static void session_teardown_full(void) {
+    if (raop_rtp_stop()) {
+        audio_diag_tone_start();   // resume the known-good tone in the streaming gap
+    }
+    raop_session_reset(&s_session);
+}
 
 // ---------------------------------------------------------------------------
 static void send_response(int fd, int status, const char *reason, int cseq,
@@ -188,17 +202,36 @@ static bool dispatch(int fd, const rtsp_request_t *req) {
     } else if (strcmp(req->method, "SETUP") == 0) {
         handle_setup(fd, req, cseq);
     } else if (strcmp(req->method, "RECORD") == 0) {
-        s_session.state = RAOP_RECORDING;
-        ESP_LOGI(TAG, "RECORD: session RECORDING (RTP receive is Phase 3)");
-        send_response(fd, 200, "OK", cseq, "Audio-Latency: 11025\r\n", NULL, 0);
+        if (s_session.state == RAOP_RECORDING) {
+            // Idempotent re-RECORD: already streaming, just re-ack.
+            send_response(fd, 200, "OK", cseq, "Audio-Latency: 11025\r\n", NULL, 0);
+        } else if (!s_session.have_key || s_session.fmtp[0] == '\0') {
+            // No AES key / ALAC config -> cannot decode (spec §9: bound bad input).
+            ESP_LOGW(TAG, "RECORD without key/fmtp -> 400");
+            send_response(fd, 400, "Bad Request", cseq, NULL, NULL, 0);
+        } else {
+            // Single-producer handoff: STOP the diag tone (blocks until it has
+            // released the audio path) BEFORE starting the decoder — the two
+            // producers must never feed audio_play_pcm() concurrently.
+            audio_diag_tone_stop();
+            if (raop_rtp_start(&s_session) == 0) {
+                s_session.state = RAOP_RECORDING;
+                ESP_LOGI(TAG, "RECORD: RTP decode streaming (first AirPlay audio)");
+            } else {
+                ESP_LOGE(TAG, "RECORD: RTP start failed; resuming diag tone");
+                audio_diag_tone_start();   // restore the pre-stream producer
+            }
+            send_response(fd, 200, "OK", cseq, "Audio-Latency: 11025\r\n", NULL, 0);
+        }
     } else if (strcmp(req->method, "FLUSH") == 0 ||
                strcmp(req->method, "PAUSE") == 0 ||
                strcmp(req->method, "SET_PARAMETER") == 0 ||
                strcmp(req->method, "GET_PARAMETER") == 0) {
-        // Real flush (Phase 3) and volume/metadata (Phase 5) land later; ack now.
+        // FLUSH affects buffering only (jitter buffer is Phase 4) and must NOT
+        // tear the decoder down; volume/metadata (Phase 5) land later. Ack now.
         send_response(fd, 200, "OK", cseq, NULL, NULL, 0);
     } else if (strcmp(req->method, "TEARDOWN") == 0) {
-        raop_session_reset(&s_session);
+        session_teardown_full();   // stop decoder, resume tone, reset session
         send_response(fd, 200, "OK", cseq, NULL, NULL, 0);
         ESP_LOGI(TAG, "TEARDOWN: session released");
         return true;
@@ -295,7 +328,7 @@ static void server_task(void *arg) {
             ESP_LOGW(TAG, "RTSP client idle > %d ms -> teardown", RAOP_CLIENT_IDLE_MS);
             close(client_fd);
             client_fd = -1;
-            raop_session_reset(&s_session);
+            session_teardown_full();
             continue;
         }
 
@@ -320,7 +353,7 @@ static void server_task(void *arg) {
                     used = 0;
                     last_activity = xTaskGetTickCount();
                     configure_client_socket(client_fd);
-                    raop_session_reset(&s_session);
+                    session_teardown_full();
                     ESP_LOGI(TAG, "sender connected");
                 }
             }
@@ -334,7 +367,7 @@ static void server_task(void *arg) {
                 send_response(client_fd, 400, "Bad Request", 0, NULL, NULL, 0);
                 close(client_fd);
                 client_fd = -1;
-                raop_session_reset(&s_session);
+                session_teardown_full();
                 continue;
             }
             int n = recv(client_fd, rx + used, sizeof(rx) - used, 0);
@@ -343,7 +376,7 @@ static void server_task(void *arg) {
                 ESP_LOGI(TAG, "sender disconnected");
                 close(client_fd);
                 client_fd = -1;
-                raop_session_reset(&s_session);
+                session_teardown_full();
                 continue;
             }
             used += (size_t)n;
@@ -374,7 +407,7 @@ static void server_task(void *arg) {
         close(s_listen_fd);
         s_listen_fd = -1;
     }
-    raop_session_reset(&s_session);
+    session_teardown_full();
     ESP_LOGI(TAG, "RTSP server stopped");
     s_task = NULL;
     vTaskDelete(NULL);

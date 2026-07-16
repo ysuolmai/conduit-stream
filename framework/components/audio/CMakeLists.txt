@@ -7,5 +7,5 @@ idf_component_register(
          "src/audio_diag.c"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "src"
-    PRIV_REQUIRES driver esp_psram
+    PRIV_REQUIRES driver esp_driver_i2s esp_psram
 )

@@ -1,0 +1,22 @@
+This component vendors a third-party ALAC (Apple Lossless Audio Codec) decoder.
+
+-------------------------------------------------------------------------------
+src/alac.c, include/alac.h
+-------------------------------------------------------------------------------
+ALAC (Apple Lossless Audio Codec) decoder
+Copyright (c) 2005 David Hammerton
+All rights reserved.
+
+Upstream / origin:
+  - Author page:  http://crazney.net/programs/itunes/alac.html
+  - Vendored via shairport-sync (apple_alac/), Mike Brady:
+        https://github.com/mikebrady/shairport-sync
+
+License: MIT-style (permission notice reproduced in full at the top of both
+alac.c and alac.h). Vendored VERBATIM — the decoder must not be rewritten; only
+its build wrapper (CMakeLists.txt) and the separate pure-C fmtp mapper
+(src/alac_config.c, include/alac_config.h, written for this project) are ours.
+
+The decoder is the exact same compact single-file ALAC implementation that
+shairport-sync feeds for AirPlay-1 (RAOP) audio, initialized directly from the
+11 SDP `a=fmtp` integers (see alac_config.h).

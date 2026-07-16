@@ -22,8 +22,11 @@ idf_component_register(
          "src/raop_challenge.c"
          "src/rtp_parser.c"
          "src/aes_frame.c"
+         "src/rtp_reorder.c"
+         "src/rtp_resend.c"
+         "src/rtp_timing.c"
          "src/raop_rtp.c"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "src"
-    PRIV_REQUIRES mbedtls lwip esp_hw_support discovery alac audio
+    PRIV_REQUIRES mbedtls lwip esp_hw_support esp_timer discovery alac audio
 )

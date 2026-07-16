@@ -1,3 +1,11 @@
-# Placeholder component. Empty for v0.0.1 so the scaffold builds; fill it in as
-# the audio path moves out of src/main.cpp.
-idf_component_register()
+# audio: transport-agnostic Playback Manager, PCM ring buffer, I2S wrapper.
+idf_component_register(
+    SRCS "src/audio.c"
+         "src/audio_i2s.c"
+         "src/audio_ringbuf.c"
+         "src/audio_playback.c"
+         "src/audio_diag.c"
+    INCLUDE_DIRS "include"
+    PRIV_INCLUDE_DIRS "src"
+    PRIV_REQUIRES driver esp_psram
+)

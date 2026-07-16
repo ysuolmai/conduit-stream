@@ -37,6 +37,10 @@
 #endif
 
 #include "audio.h"
+#include "nvs_flash.h"
+#include "system_config.h"
+#include "wifi.h"
+#include "mdns_service.h"
 
 static const char *TAG = "conduit";
 
@@ -81,10 +85,38 @@ static void log_boot_banner(void)
 }
 
 // -----------------------------------------------------------------------------
+// Fires from the Wi-Fi event task once an IPv4 address is up. esp_netif is ready
+// now, so it is safe to advertise. Hostname "conduit" -> conduit.local.
+static void on_got_ip(void)
+{
+    mdns_advertise_raop("conduit", system_config_get_instance_name(), RAOP_RTSP_PORT);
+}
+
+// -----------------------------------------------------------------------------
 extern "C" void app_main(void)
 {
     log_boot_banner();
-    audio_init();               // I2S + PSRAM ring + playback task
-    audio_diag_tone_start();    // 440 Hz through the new path (diagnostic)
-    ESP_LOGI(TAG, "boot complete. if the Aura is silent, check SCK->GND and XSMT->3.3V.");
+    audio_init();               // I2S + PSRAM ring + playback task (Phase 0)
+    audio_diag_tone_start();    // 440 Hz through the audio path (still proves audio works)
+
+    // nvs_flash_init() can return ESP_ERR_NVS_NO_FREE_PAGES / NEW_VERSION_FOUND
+    // after a partition-table change; erase + retry so we never brick on that.
+    esp_err_t nvs_err = nvs_flash_init();
+    if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        nvs_err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(nvs_err);
+    ESP_ERROR_CHECK(system_config_init());
+
+    if (system_config_has_credentials()) {
+        wifi_start(on_got_ip);  // on GOT_IP -> mdns_advertise_raop(...)
+    } else {
+        // Spec §8: no creds -> one clear line, DO NOT boot-loop. Sit idle; the
+        // 440 Hz tone keeps playing so the device is obviously alive.
+        ESP_LOGW(TAG, "no Wi-Fi credentials: set CONFIG_CONDUIT_WIFI_SSID (menuconfig) "
+                      "or write nvs 'conduit/wifi_ssid'. Idling; audio path still runs.");
+    }
+
+    ESP_LOGI(TAG, "boot complete.");
 }

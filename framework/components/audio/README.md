@@ -36,6 +36,24 @@ must be pinned to `AUDIO_PIN_CORE` (the SPSC ring is not cross-core safe). Phase
 will surface this affinity through the public API before the out-of-component RAOP
 decoder becomes the producer.
 
+## Software volume (Phase 5, spec §6e)
+
+`audio_set_volume(float db)` takes an AirPlay dB value (`-144` = mute .. `0` = full)
+and stores a Q16.16 linear gain (`pow(10, dB/20) * 65536`, cited to shairport
+`player.c`). The playback drain reads it once per cycle and applies it per int16
+sample with round-half-away-from-zero + int16 clamp, **bypassing the multiply
+entirely at unity** (0 dB, the power-up default) so full-scale playback costs no math.
+
+- `src/audio_volume.{h,c}` — pure dB→Q16 conversion + per-sample apply, host-tested
+  (`test/test_audio_volume`): dB→gain vectors, clamp to `[-30, 0]`, the mute sentinel,
+  and +/- rounding symmetry.
+- Gain is applied **after** the drift DROP/DUP so it never perturbs the Phase-4
+  watermark; the DUP pad frame is gained too for exactness; the underrun silence path
+  is already zero.
+- Transport-agnostic: RAOP calls `audio_set_volume`; the audio core never learns what
+  RAOP is. The gain is a plain aligned `volatile int32_t` written by the RTSP task and
+  read by the drain task (both pinned to `AUDIO_PIN_CORE`) — atomic, no lock.
+
 ## Later
 
 Audio Decoder (ALAC) and RTP-sequence-indexed jitter buffering arrive with the

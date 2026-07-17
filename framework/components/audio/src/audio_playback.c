@@ -1,6 +1,7 @@
 #include "audio_playback.h"
 #include "audio_i2s.h"
 #include "audio_drift.h"
+#include "audio_volume.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -33,6 +34,13 @@ void audio_playback_task(void *arg) {
     };
 
     for (;;) {
+        // Software volume (spec §6e): one Q16.16 gain read per cycle, applied to
+        // whatever leaves toward I2S this cycle. AUDIO_VOL_UNITY (0 dB, the power-up
+        // default) BYPASSES the multiply entirely — full scale, no needless math.
+        // Applied AFTER the drift DROP/DUP so it never perturbs the Phase-4
+        // watermark logic; the silence path is already zero, so no gain there.
+        int32_t fix = audio_playback_fix_q16();
+
         // At most one single-frame drift correction per cycle, BEFORE the read.
         switch (audio_drift_decide(audio_ringbuf_available(ring), &drift_cfg)) {
             case AUDIO_DRIFT_DROP:
@@ -44,7 +52,10 @@ void audio_playback_task(void *arg) {
                 // the tail chunk below, so the pad is a true local frame-repeat.
                 // (Not head-1: that far sample would splice a click while avail
                 // sits below low — startup fill, post-underrun, sustained jitter.)
-                if (audio_ringbuf_first_frame(ring, f)) audio_i2s_write(f, 1);
+                if (audio_ringbuf_first_frame(ring, f)) {
+                    if (fix != AUDIO_VOL_UNITY) audio_volume_apply(f, 2, fix);
+                    audio_i2s_write(f, 1);
+                }
                 break;                         // DUP goes straight to I2S, not the ring
             }
             default:
@@ -53,6 +64,7 @@ void audio_playback_task(void *arg) {
 
         size_t got = audio_ringbuf_read(ring, chunk, PLAYBACK_CHUNK_FRAMES);
         if (got > 0) {
+            if (fix != AUDIO_VOL_UNITY) audio_volume_apply(chunk, got * 2, fix);
             audio_i2s_write(chunk, got);
         } else {
             audio_i2s_write(silence, PLAYBACK_CHUNK_FRAMES);

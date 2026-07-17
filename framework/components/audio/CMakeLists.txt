@@ -6,6 +6,7 @@ idf_component_register(
          "src/audio_playback.c"
          "src/audio_drift.c"
          "src/audio_diag.c"
+         "src/audio_volume.c"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "src"
     PRIV_REQUIRES driver esp_driver_i2s esp_psram

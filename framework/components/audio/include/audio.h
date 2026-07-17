@@ -41,6 +41,14 @@ size_t audio_play_pcm(const int16_t *frames, size_t n_frames);
 bool   audio_producer_acquire(const char *who);
 void   audio_producer_release(void);
 
+// Set playback volume from an AirPlay dB value (-144 = mute .. 0 = full). Applied
+// as software gain on the int16 PCM in the playback drain (the PCM5102A has no gain
+// pin). Bypassed at unity (0 dB) to save cycles. Transport-agnostic: RAOP calls
+// this; the audio core never learns what RAOP is. Thread-safe: stores a single
+// aligned int32 read by the drain task (both pinned to audio_producer_core(), so an
+// aligned 32-bit load/store is atomic — no torn read, no lock).
+void   audio_set_volume(float db);
+
 // Phase 0 diagnostic: start a task that streams a 440 Hz sine through
 // audio_play_pcm() (the retained v0.0.1 known-good path). It is the pre-stream
 // producer — the RAOP path stops it (audio_diag_tone_stop) before it begins

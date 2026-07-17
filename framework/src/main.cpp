@@ -39,6 +39,7 @@
 #include "audio.h"
 #include "nvs_flash.h"
 #include "system_config.h"
+#include "system_led.h"
 #include "wifi.h"
 #include "mdns_service.h"
 #include "raop.h"
@@ -86,13 +87,24 @@ static void log_boot_banner(void)
 }
 
 // -----------------------------------------------------------------------------
+// Status-LED transition for RAOP session events (spec §7). Fired from the RTSP
+// task: RECORD -> STREAMING (green), TEARDOWN / idle-reclaim -> CONNECTED_IDLE (blue).
+static void on_raop_event(raop_event_t ev)
+{
+    system_led_set_state(ev == RAOP_EV_STREAMING ? LED_ST_STREAMING
+                                                  : LED_ST_CONNECTED_IDLE);
+}
+
+// -----------------------------------------------------------------------------
 // Fires from the Wi-Fi event task once an IPv4 address is up. esp_netif is ready
 // now, so it is safe to advertise. Hostname "conduit" -> conduit.local.
 static void on_got_ip(void)
 {
+    system_led_set_state(LED_ST_CONNECTED_IDLE);   // Wi-Fi up, no stream yet (blue)
     mdns_advertise_raop("conduit", system_config_get_instance_name(), RAOP_RTSP_PORT);
     // Phase 2: now actually man the advertised RTSP port so a sender can connect
-    // and negotiate (OPTIONS -> ANNOUNCE -> SETUP -> RECORD). No audio yet (Phase 3).
+    // and negotiate (OPTIONS -> ANNOUNCE -> SETUP -> RECORD -> Phase 3 audio).
+    raop_set_event_cb(on_raop_event);   // LED reflects streaming/idle (register once)
     raop_server_start();
 }
 
@@ -113,11 +125,16 @@ extern "C" void app_main(void)
     ESP_ERROR_CHECK(nvs_err);
     ESP_ERROR_CHECK(system_config_init());
 
+    // Status LED (spec §7). Guarded: a missing/unwired WS2812 never crashes boot.
+    system_led_init();
+
     if (system_config_has_credentials()) {
-        wifi_start(on_got_ip);  // on GOT_IP -> mdns_advertise_raop(...)
+        system_led_set_state(LED_ST_WIFI_CONNECTING);   // amber while connecting
+        wifi_start(on_got_ip);  // on GOT_IP -> LED blue + mdns_advertise_raop(...)
     } else {
         // Spec §8: no creds -> one clear line, DO NOT boot-loop. Sit idle; the
         // 440 Hz tone keeps playing so the device is obviously alive.
+        system_led_set_state(LED_ST_NEEDS_CREDS);        // red: needs credentials
         ESP_LOGW(TAG, "no Wi-Fi credentials: set CONFIG_CONDUIT_WIFI_SSID (menuconfig) "
                       "or write nvs 'conduit/wifi_ssid'. Idling; audio path still runs.");
     }

@@ -23,6 +23,30 @@ Pure string logic (`src/device_id.c`) has zero ESP-IDF deps and is host-tested
 under `pio test -e native`; the NVS/MAC glue (`src/system_config.c`) is verified
 by the target build.
 
+## RGB status LED (Phase 5, spec §7)
+
+The onboard WS2812 on **GPIO48** (ESP32-S3-DevKitC-1) reflects device state via the
+`espressif/led_strip` managed component (RMT backend, declared in `idf_component.yml`):
+
+| state | colour | when |
+|---|---|---|
+| `LED_ST_NEEDS_CREDS` | red | boot, no Wi-Fi credentials |
+| `LED_ST_WIFI_CONNECTING` | amber | station connecting |
+| `LED_ST_CONNECTED_IDLE` | blue | Wi-Fi up (GOT_IP), no live stream |
+| `LED_ST_STREAMING` | green | RAOP `RECORD` live |
+
+- `src/led_state.{c}` + `include/led_state.h` — **pure** state→(r,g,b) map (brightness
+  ≤16; status indicator, not lighting), host-tested (`test/test_led_state`).
+- `src/system_led.c` + `include/system_led.h` — **guarded** led_strip glue:
+  `system_led_init()` / `system_led_set_state()`. If `led_strip_new_rmt_device` fails
+  (LED not wired, wrong board revision, RMT unavailable) the handle stays `NULL` and
+  every set becomes a logged no-op — **it never crashes boot**.
+- GPIO is a compile-time `#define STATUS_LED_GPIO 48` (a few DevKitC-1 revisions route
+  it to 38); a wrong pin is a silently-dark, non-crashing LED.
+- `main` drives the transitions (NEEDS_CREDS/CONNECTING at boot, CONNECTED_IDLE on
+  GOT_IP); the RAOP event callback drives STREAMING/IDLE. All callers are low-rate
+  tasks — never the audio drain/ISR (`led_strip_refresh` blocks ~30 µs on RMT).
+
 ## Carried-forward note (Phase 0 review item)
 
 `audio_play_pcm()` has a **same-core producer contract** (SPSC ring pinned to

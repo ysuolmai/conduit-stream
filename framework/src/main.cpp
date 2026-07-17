@@ -43,6 +43,7 @@
 #include "wifi.h"
 #include "mdns_service.h"
 #include "raop.h"
+#include "udp_log.h"   // DEBUG: mirror logs over UDP (serial console is unreliable)
 
 static const char *TAG = "conduit";
 
@@ -100,6 +101,7 @@ static void on_raop_event(raop_event_t ev)
 // now, so it is safe to advertise. Hostname "conduit" -> conduit.local.
 static void on_got_ip(void)
 {
+    udp_log_init();   // DEBUG: start mirroring logs over UDP now that we have an IP
     system_led_set_state(LED_ST_CONNECTED_IDLE);   // Wi-Fi up, no stream yet (blue)
     mdns_advertise_raop("conduit", system_config_get_instance_name(), RAOP_RTSP_PORT);
     // Phase 2: now actually man the advertised RTSP port so a sender can connect
@@ -113,7 +115,7 @@ extern "C" void app_main(void)
 {
     log_boot_banner();
     audio_init();               // I2S + PSRAM ring + playback task (Phase 0)
-    audio_diag_tone_start();    // 440 Hz through the audio path (still proves audio works)
+    // audio_diag_tone_start();  // DEBUG: diag tone disabled to isolate RAOP audio-path streaming
 
     // nvs_flash_init() can return ESP_ERR_NVS_NO_FREE_PAGES / NEW_VERSION_FOUND
     // after a partition-table change; erase + retry so we never brick on that.

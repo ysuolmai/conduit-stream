@@ -5,6 +5,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_log.h"   // DEBUG: crackle diagnosis stats
 
 #define PLAYBACK_CHUNK_FRAMES 256
 
@@ -33,6 +34,9 @@ void audio_playback_task(void *arg) {
         .low  = ring->capacity * 1 / 4,
     };
 
+    // DEBUG: crackle diagnosis — count underruns / drift corrections per ~2 s window.
+    uint32_t dbg_cycles = 0, dbg_underrun = 0, dbg_drop = 0, dbg_dup = 0, dbg_min_avail = 0xFFFFFFFF;
+
     for (;;) {
         // Software volume (spec §6e): one Q16.16 gain read per cycle, applied to
         // whatever leaves toward I2S this cycle. AUDIO_VOL_UNITY (0 dB, the power-up
@@ -42,11 +46,15 @@ void audio_playback_task(void *arg) {
         int32_t fix = audio_playback_fix_q16();
 
         // At most one single-frame drift correction per cycle, BEFORE the read.
-        switch (audio_drift_decide(audio_ringbuf_available(ring), &drift_cfg)) {
+        size_t avail = audio_ringbuf_available(ring);
+        if (avail < dbg_min_avail) dbg_min_avail = avail;
+        switch (audio_drift_decide(avail, &drift_cfg)) {
             case AUDIO_DRIFT_DROP:
+                dbg_drop++;
                 audio_ringbuf_drop(ring, 1);   // shed ~23 µs: buffer above high
                 break;
             case AUDIO_DRIFT_DUP: {
+                dbg_dup++;
                 int16_t f[2];                  // pad ~23 µs: buffer below low
                 // Repeat the NEXT-TO-PLAY frame (at tail), written just ahead of
                 // the tail chunk below, so the pad is a true local frame-repeat.
@@ -67,7 +75,23 @@ void audio_playback_task(void *arg) {
             if (fix != AUDIO_VOL_UNITY) audio_volume_apply(chunk, got * 2, fix);
             audio_i2s_write(chunk, got);
         } else {
+            dbg_underrun++;
             audio_i2s_write(silence, PLAYBACK_CHUNK_FRAMES);
+        }
+
+        // DEBUG: per-window crackle stats (~2 s @ 256 frames / 44.1 kHz). Logs ONLY
+        // when a correction actually fired, so a clean stream stays silent (no
+        // periodic glitch from logging on the audio task). If crackle returns, this
+        // shows whether it's underrun (empty ring) vs drift DROP/DUP over-firing.
+        if (++dbg_cycles >= 344) {
+            if (dbg_underrun || dbg_drop || dbg_dup) {
+                ESP_LOGW("pb_stats", "2s: underrun=%lu drop=%lu dup=%lu min_avail=%lu cap=%u",
+                         (unsigned long)dbg_underrun, (unsigned long)dbg_drop, (unsigned long)dbg_dup,
+                         (unsigned long)(dbg_min_avail == 0xFFFFFFFFu ? 0 : dbg_min_avail),
+                         (unsigned)ring->capacity);
+            }
+            dbg_cycles = dbg_underrun = dbg_drop = dbg_dup = 0;
+            dbg_min_avail = 0xFFFFFFFFu;
         }
     }
 }

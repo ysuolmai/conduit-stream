@@ -259,12 +259,17 @@ static void handle_audio(void) {
     if (rtp_parse(s_rx, (size_t)n, &h) != 0) return;
     if (h.payload_type != RTP_PT_AUDIO) return;
 
-    if (!s_peer_known) {
-        s_peer = src;                       // peer IP = first audio source (shairport does the same)
-        s_peer_known = true;
-        if (!s_reorder.started) rtp_reorder_anchor(&s_reorder, h.seq);  // authoritative anchor
-        ESP_LOGI(TAG, "peer learned; anchor seq=%u ctrl=%d timing=%d",
+    // Anchor the reorder buffer on the first audio packet (independent of the peer:
+    // the peer is normally seeded from the RTSP sender at RECORD).
+    if (!s_reorder.started) {
+        rtp_reorder_anchor(&s_reorder, h.seq);   // authoritative anchor
+        ESP_LOGI(TAG, "anchor seq=%u ctrl=%d timing=%d",
                  h.seq, s_client_control_port, s_client_timing_port);
+    }
+    // Fallback only: if RECORD had no sender IP, learn the peer from the audio source.
+    if (!s_peer_known) {
+        s_peer = src;
+        s_peer_known = true;
     }
 
     insert_audio(h.seq, h.payload, h.payload_len);
@@ -327,6 +332,10 @@ static void rtp_task(void *arg) {
     (void)arg;
     ESP_LOGI(TAG, "RTP receive task up (core %d): 3-socket select loop (audio/control/timing)",
              audio_producer_core());
+    // Send the FIRST timing request right away (peer already seeded from the RTSP
+    // sender at RECORD): iOS drops the session at ~2 s if it never sees timing, and
+    // the steady cadence below is 3 s. Backdate last_timing so iteration 1 fires.
+    if (s_peer_known) send_timing_request();
     TickType_t last_timing = xTaskGetTickCount();
 
     while (s_run) {
@@ -471,7 +480,19 @@ int raop_rtp_start(raop_session_t *s) {
     s_timing_fd  = s->timing_fd;
     s_client_control_port = s->client_control_port;
     s_client_timing_port  = s->client_timing_port;
-    s_peer_known = false;
+    // Seed the peer from the RTSP sender IP (captured at RECORD) so timing/resend
+    // requests can flow to the sender's control/timing ports IMMEDIATELY, before
+    // any audio arrives. iOS tears the session down at ~2 s if the receiver's
+    // timing channel is silent, and the first timing request otherwise waited on
+    // the first audio packet -> deadlock. handle_audio() still refines the peer.
+    if (s->client_ip != 0) {
+        memset(&s_peer, 0, sizeof(s_peer));
+        s_peer.sin_family = AF_INET;
+        s_peer.sin_addr.s_addr = s->client_ip;
+        s_peer_known = true;
+    } else {
+        s_peer_known = false;
+    }
     s_resend_valid = false;
 
     // Bound recvfrom on every socket so a spurious wake never blocks the task and it
@@ -490,7 +511,11 @@ int raop_rtp_start(raop_session_t *s) {
     }
     s_run  = true;
     s_done = false;
-    if (xTaskCreatePinnedToCore(rtp_task, "raop_rtp", 8192, NULL, 6,
+    // 16 KB: per packet this task runs PSA AES-128-CBC decrypt + a full ALAC frame
+    // decode (Hammerton decoder uses sizable temp buffers), which overflows a
+    // smaller stack — same failure class as the RTSP-task RSA overflow. Sized to
+    // match the RTSP task.
+    if (xTaskCreatePinnedToCore(rtp_task, "raop_rtp", 16384, NULL, 6,
                                 &s_task, audio_producer_core()) != pdPASS) {
         ESP_LOGE(TAG, "xTaskCreate(raop_rtp) failed");
         audio_producer_release();

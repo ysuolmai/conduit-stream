@@ -74,7 +74,7 @@ static raop_session_t   s_session;
 // it read from — order matters. Idempotent; a no-op when not streaming.
 static void session_teardown_full(void) {
     if (raop_rtp_stop()) {
-        audio_diag_tone_start();   // resume the known-good tone in the streaming gap
+        // audio_diag_tone_start();  // DEBUG: diag tone disabled to isolate RAOP streaming
     }
     raop_metadata_clear();         // forget the last now-playing (spec §5b)
     raop_session_reset(&s_session);
@@ -263,13 +263,22 @@ static bool dispatch(int fd, const rtsp_request_t *req) {
             // released the audio path) BEFORE starting the decoder — the two
             // producers must never feed audio_play_pcm() concurrently.
             audio_diag_tone_stop();
+            // Capture the sender's IP from the RTSP TCP connection so the RTP task
+            // can start the timing/resend channels immediately (not wait for the
+            // first audio packet). The sender's timing/control servers live at this
+            // IP + the ports from SETUP.
+            struct sockaddr_in praddr;
+            socklen_t prlen = sizeof(praddr);
+            if (getpeername(fd, (struct sockaddr *)&praddr, &prlen) == 0) {
+                s_session.client_ip = praddr.sin_addr.s_addr;
+            }
             if (raop_rtp_start(&s_session) == 0) {
                 s_session.state = RAOP_RECORDING;
                 if (s_ev_cb) s_ev_cb(RAOP_EV_STREAMING);   // LED -> STREAMING (green)
                 ESP_LOGI(TAG, "RECORD: RTP decode streaming (first AirPlay audio)");
             } else {
                 ESP_LOGE(TAG, "RECORD: RTP start failed; resuming diag tone");
-                audio_diag_tone_start();   // restore the pre-stream producer
+                // audio_diag_tone_start();  // DEBUG: diag tone disabled to isolate RAOP streaming
             }
             send_response(fd, 200, "OK", cseq, "Audio-Latency: 11025\r\n", NULL, 0);
         }
@@ -320,8 +329,49 @@ static void configure_client_socket(int fd) {
 }
 
 // ---------------------------------------------------------------------------
+// Case-insensitive prefix match over a bounded buffer (no NUL assumptions).
+static int ci_startswith(const char *s, const char *key, size_t klen) {
+    for (size_t i = 0; i < klen; i++) {
+        char a = s[i], b = key[i];
+        if (a >= 'A' && a <= 'Z') a += 32;
+        if (b >= 'A' && b <= 'Z') b += 32;
+        if (a != b) return 0;
+    }
+    return 1;
+}
+
+// Find header `key` in the bounded RTSP header block and return its base-10 value,
+// or -1 if absent. Used to drain oversized bodies we don't buffer (artwork).
+static long hdr_scan_long(const char *buf, size_t len, const char *key) {
+    size_t klen = strlen(key);
+    if (len < klen) return -1;
+    for (size_t i = 0; i + klen < len; i++) {
+        if (ci_startswith(buf + i, key, klen)) {
+            const char *v = buf + i + klen;
+            const char *e = buf + len;
+            while (v < e && (*v == ':' || *v == ' ' || *v == '\t')) v++;
+            return strtol(v, NULL, 10);
+        }
+    }
+    return -1;
+}
+
 static void server_task(void *arg) {
     (void)arg;
+
+    // Crypto init (RSA-2048 self-test: sign + encrypt + decrypt round-trip) runs
+    // HERE, on this task's large stack — NOT in raop_server_start()'s caller, which
+    // is the wifi GOT_IP handler running on the sys_evt event task (~2.3 KB stack).
+    // mbedTLS/PSA bignum ops need ~6-8 KB and overflow sys_evt -> panic/reboot loop.
+    // Fail loud: without the key we cannot answer the Apple-Challenge, so don't serve.
+    if (raop_crypto_init() != ESP_OK) {
+        ESP_LOGE(TAG, "raop_crypto_init failed; RTSP server not serving "
+                      "(cannot answer the Apple-Challenge without the key)");
+        s_running = false;
+        s_task = NULL;
+        vTaskDelete(NULL);
+        return;
+    }
 
     s_listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (s_listen_fd < 0) {
@@ -415,8 +465,37 @@ static void server_task(void *arg) {
         // Data (or EOF) on the active connection.
         if (client_fd >= 0 && FD_ISSET(client_fd, &rfds)) {
             if (used >= sizeof(rx)) {
-                // A single request overflowed the buffer: bound untrusted input (§9).
-                ESP_LOGW(TAG, "request exceeds %d bytes -> 400", (int)sizeof(rx));
+                // Buffer full but the request is still incomplete: an oversized body,
+                // almost always a SET_PARAMETER carrying album ARTWORK (a JPEG, tens
+                // of KB) or large DAAP metadata we don't need. Rather than 400 +
+                // teardown (which kills a live stream), find the header terminator,
+                // read Content-Length, DRAIN the rest of the body off the socket, and
+                // ack 200 OK so iOS keeps streaming. Headers always fit in rx.
+                const char *hdr_end = NULL;
+                for (size_t i = 0; i + 4 <= used; i++) {
+                    if (memcmp(rx + i, "\r\n\r\n", 4) == 0) { hdr_end = rx + i + 4; break; }
+                }
+                if (hdr_end) {
+                    size_t hlen = (size_t)(hdr_end - rx);
+                    long clen = hdr_scan_long(rx, hlen, "Content-Length");
+                    long cseq = hdr_scan_long(rx, hlen, "CSeq");
+                    long to_drain = (clen > 0) ? clen - (long)(used - hlen) : 0;
+                    char tmp[512];
+                    while (to_drain > 0) {
+                        size_t want = (to_drain < (long)sizeof(tmp)) ? (size_t)to_drain : sizeof(tmp);
+                        int dn = recv(client_fd, tmp, want, 0);
+                        if (dn <= 0) break;
+                        to_drain -= dn;
+                    }
+                    ESP_LOGW(TAG, "oversized request (Content-Length=%ld) drained -> 200 OK", clen);
+                    send_response(client_fd, 200, "OK", (int)(cseq < 0 ? 0 : cseq), NULL, NULL, 0);
+                    used = 0;
+                    last_activity = xTaskGetTickCount();
+                    continue;
+                }
+                // No header terminator in the whole buffer -> genuinely malformed huge
+                // headers (untrusted input, §9): reject and drop.
+                ESP_LOGW(TAG, "request headers exceed %d bytes -> 400", (int)sizeof(rx));
                 send_response(client_fd, 400, "Bad Request", 0, NULL, NULL, 0);
                 close(client_fd);
                 client_fd = -1;
@@ -472,14 +551,13 @@ void raop_server_start(void) {
         ESP_LOGW(TAG, "raop_server_start: already running");
         return;
     }
-    if (raop_crypto_init() != ESP_OK) {
-        ESP_LOGE(TAG, "raop_crypto_init failed; NOT starting RTSP server "
-                      "(cannot answer the Apple-Challenge without the key)");
-        return;
-    }
+    // NB: called from the wifi GOT_IP handler (sys_evt task, small stack). Do NO
+    // heavy work here — just spawn the server task. Crypto init (RSA-2048) runs
+    // inside server_task on its 16 KB stack; the RTSP handlers also do per-request
+    // RSA sign/decrypt, so the task stack must accommodate mbedTLS bignum ops.
     raop_session_reset(&s_session);
     s_running = true;
-    if (xTaskCreate(server_task, "raop_rtsp", 6144, NULL, 5, &s_task) != pdPASS) {
+    if (xTaskCreate(server_task, "raop_rtsp", 16384, NULL, 5, &s_task) != pdPASS) {
         ESP_LOGE(TAG, "xTaskCreate(raop_rtsp) failed");
         s_running = false;
         s_task = NULL;

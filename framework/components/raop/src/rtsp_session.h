@@ -24,6 +24,11 @@ typedef struct {
     int      client_control_port;
     int      client_timing_port;
 
+    // Sender IPv4 (network byte order), captured via getpeername() on the RTSP
+    // socket at RECORD. Lets timing/resend start immediately, without waiting for
+    // the first audio packet to learn the peer (iOS drops us at ~2 s otherwise).
+    uint32_t client_ip;
+
     // Receiver-side sockets we bind + their local ports (reported back in Transport).
     int      audio_fd,  control_fd,  timing_fd;
     uint16_t audio_port, control_port, timing_port;

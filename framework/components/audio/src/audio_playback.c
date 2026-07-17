@@ -26,12 +26,20 @@ void audio_playback_task(void *arg) {
     static int16_t chunk[PLAYBACK_CHUNK_FRAMES * 2];
     static const int16_t silence[PLAYBACK_CHUNK_FRAMES * 2] = {0};
 
-    // Band derived once from ring capacity: target ~50 % depth, high/low at
-    // 3/4 and 1/4 of capacity so drift correction is rare and never competes with
-    // normal fill. Capacity is fixed for the ring's lifetime.
+    // RAOP senders buffer ~2 s ahead, and our ring is ~2 s, so during normal
+    // streaming the buffer legitimately runs NEAR-FULL the entire time (measured
+    // ~98 %). A ¾-capacity high watermark is therefore permanently exceeded, which
+    // trips a single-frame DROP every ~6 ms drain cycle (~172×/s) — audible as a
+    // constant crackle, NOT the rare ppm correction it was meant to be.
+    //
+    // Real overflow is already prevented by producer backpressure (raop_rtp retries
+    // on a full ring) and real underflow by the silence path below. So drift
+    // correction only needs to fire at the TRUE extremes: shed one frame if the
+    // ring is brim-full (producer blocked = sender faster than us), pad one if it's
+    // within a chunk of empty. Normal near-full operation triggers neither.
     const audio_drift_cfg_t drift_cfg = {
-        .high = ring->capacity * 3 / 4,
-        .low  = ring->capacity * 1 / 4,
+        .high = ring->capacity - 1,               // brim-full only (backpressure handles the rest)
+        .low  = PLAYBACK_CHUNK_FRAMES,             // within ~6 ms of empty only
     };
 
     // DEBUG: crackle diagnosis — count underruns / drift corrections per ~2 s window.

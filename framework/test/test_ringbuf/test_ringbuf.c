@@ -74,19 +74,25 @@ void test_drop_clamps_to_available(void) {
     TEST_ASSERT_EQUAL_UINT(0, audio_ringbuf_available(&rb));
 }
 
-void test_last_frame_empty_is_false(void) {
+void test_first_frame_empty_is_false(void) {
     int16_t f[2];
-    TEST_ASSERT_FALSE(audio_ringbuf_last_frame(&rb, f));        // empty -> false
+    TEST_ASSERT_FALSE(audio_ringbuf_first_frame(&rb, f));       // empty -> false
 }
 
-void test_last_frame_returns_newest(void) {
-    int16_t in[3*2], f[2];
+void test_first_frame_returns_next_to_play(void) {
+    int16_t in[3*2], out[1*2], f[2];
     fill_frames(in, 3, 500);   // frames (500,-500)(501,-501)(502,-502)
     audio_ringbuf_write(&rb, in, 3);
-    TEST_ASSERT_TRUE(audio_ringbuf_last_frame(&rb, f));
-    TEST_ASSERT_EQUAL_INT16(502, f[0]);
-    TEST_ASSERT_EQUAL_INT16(-502, f[1]);
+    // DUP source is the OLDEST readable frame (at tail / next to play), NOT head-1.
+    TEST_ASSERT_TRUE(audio_ringbuf_first_frame(&rb, f));
+    TEST_ASSERT_EQUAL_INT16(500, f[0]);
+    TEST_ASSERT_EQUAL_INT16(-500, f[1]);
     TEST_ASSERT_EQUAL_UINT(3, audio_ringbuf_available(&rb));    // did NOT advance tail
+    // Tracks tail: after one frame is played the next-to-play frame advances.
+    audio_ringbuf_read(&rb, out, 1);
+    TEST_ASSERT_TRUE(audio_ringbuf_first_frame(&rb, f));
+    TEST_ASSERT_EQUAL_INT16(501, f[0]);
+    TEST_ASSERT_EQUAL_INT16(-501, f[1]);
 }
 
 int main(void) {
@@ -98,7 +104,7 @@ int main(void) {
     RUN_TEST(test_wraparound_preserves_order);
     RUN_TEST(test_drop_advances_tail);
     RUN_TEST(test_drop_clamps_to_available);
-    RUN_TEST(test_last_frame_empty_is_false);
-    RUN_TEST(test_last_frame_returns_newest);
+    RUN_TEST(test_first_frame_empty_is_false);
+    RUN_TEST(test_first_frame_returns_next_to_play);
     return UNITY_END();
 }

@@ -45,11 +45,10 @@ size_t audio_ringbuf_drop(audio_ringbuf_t *rb, size_t n) {
     return n;
 }
 
-bool audio_ringbuf_last_frame(const audio_ringbuf_t *rb, int16_t out[2]) {
+bool audio_ringbuf_first_frame(const audio_ringbuf_t *rb, int16_t out[2]) {
     if (audio_ringbuf_available(rb) == 0) return false;
-    // Newest readable frame is at (head - 1) mod capacity; index only, no advance.
-    size_t idx = (rb->head + rb->capacity - 1) % rb->capacity;
-    out[0] = rb->storage[idx * 2];
-    out[1] = rb->storage[idx * 2 + 1];
+    // Oldest readable frame (next to play) sits at `tail`; index only, no advance.
+    out[0] = rb->storage[rb->tail * 2];
+    out[1] = rb->storage[rb->tail * 2 + 1];
     return true;
 }

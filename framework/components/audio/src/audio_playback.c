@@ -40,7 +40,11 @@ void audio_playback_task(void *arg) {
                 break;
             case AUDIO_DRIFT_DUP: {
                 int16_t f[2];                  // pad ~23 µs: buffer below low
-                if (audio_ringbuf_last_frame(ring, f)) audio_i2s_write(f, 1);
+                // Repeat the NEXT-TO-PLAY frame (at tail), written just ahead of
+                // the tail chunk below, so the pad is a true local frame-repeat.
+                // (Not head-1: that far sample would splice a click while avail
+                // sits below low — startup fill, post-underrun, sustained jitter.)
+                if (audio_ringbuf_first_frame(ring, f)) audio_i2s_write(f, 1);
                 break;                         // DUP goes straight to I2S, not the ring
             }
             default:

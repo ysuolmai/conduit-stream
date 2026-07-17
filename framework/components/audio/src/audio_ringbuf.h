@@ -47,7 +47,13 @@ size_t audio_ringbuf_read(audio_ringbuf_t *rb, int16_t *out, size_t n_frames);
 // the SPSC contract is preserved (only the drain task may call this).
 size_t audio_ringbuf_drop(audio_ringbuf_t *rb, size_t n);
 
-// Copy the most recently readable frame into out[2] (drift DUP source). Returns
-// false if empty. Does NOT advance tail. Consumer-side: reads head-1 without
-// touching either index.
-bool   audio_ringbuf_last_frame(const audio_ringbuf_t *rb, int16_t out[2]);
+// Copy the OLDEST readable frame — the next frame to be played, at `tail` — into
+// out[2] (drift DUP source). Returns false if empty. Does NOT advance tail.
+// Consumer-side: reads `tail` without touching either index. The DUP path plays
+// this frame immediately before the tail chunk, so the pad is a true LOCAL
+// ~23 µs frame-repeat adjacent to the current playback point — not a splice of a
+// far sample from head-1 (which can sit up to `low` frames, ~0.5 s, ahead). Note
+// `tail` (not `tail-1`) is deliberate: `tail-1` is already consumed and is the
+// exact slot the producer overwrites next, so reading it races the producer;
+// `tail` is unread data the producer never touches.
+bool   audio_ringbuf_first_frame(const audio_ringbuf_t *rb, int16_t out[2]);

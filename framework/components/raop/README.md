@@ -174,9 +174,39 @@ checked, and base64 decode bounds its output. **The RAOP RSA private key is publ
 (it ships in every open receiver) and AirPlay 1 has no pairing — anyone on the LAN can
 stream. This is inherent to RAOP and an accepted trade-off for a home speaker.
 
+## SET_PARAMETER: volume, metadata, progress (Phase 5, spec §5b)
+
+`SET_PARAMETER` dispatches on `Content-Type` (matched shairport `rtsp.c`), always
+acking `200`:
+
+- **`text/parameters`** → `raop_parse_volume()` reads a `volume: <float>\r\n` line
+  (dB `-30..0`, `-144` = mute) and calls `audio_set_volume()`; `raop_parse_progress()`
+  reads `progress: <start>/<cur>/<end>` (three RTP timestamps @44100 Hz) and logs
+  elapsed/total once. Both parsers are **pure** and host-tested (`test/test_raop_volume`).
+- **`application/x-dmap-tagged`** → `dmap_parse()` walks the DMAP/DAAP TLVs
+  (`[4-char code][BE32 len][value]`, recursing into the `mlit` container) extracting
+  `minm`=title, `asar`=artist, `asal`=album as bounded UTF-8. `raop_metadata_update()`
+  stores them and logs `now playing: …` **only when a field changes** (senders resend
+  redundantly). Pure walker host-tested incl. truncated/overrunning/oversize bodies
+  (`test/test_dmap`); the dispatch decision is host-tested (`test/test_setparam`).
+- **anything else** (artwork `image/*`, unknown, absent) → ignored.
+
+All lengths are bounded against the untrusted body (spec §9): the parsers never read
+past `body+len` (the RTSP body pointer is not NUL-terminated), string copies are
+capped at `DMAP_STR_MAX-1` + NUL, and a claimed length overrunning the body stops the
+walk. `raop_metadata_clear()` runs on TEARDOWN.
+
+## Session events → status LED
+
+`raop_set_event_cb()` registers a callback fired from the RTSP task on RECORD
+(`RAOP_EV_STREAMING`) and on TEARDOWN / idle-reclaim (`RAOP_EV_IDLE`). `main` wires it
+to `system_led_set_state` so the LED reflects streaming vs idle without `raop`
+depending on the `system` component.
+
 ## Public API
 
 ```c
-void raop_server_start(void);  // called from main on Wi-Fi GOT_IP, after mDNS advertise
-void raop_server_stop(void);   // used on Wi-Fi LOST_IP (later phase)
+void raop_server_start(void);            // called from main on Wi-Fi GOT_IP, after mDNS advertise
+void raop_server_stop(void);             // used on Wi-Fi LOST_IP (later phase)
+void raop_set_event_cb(raop_event_cb_t); // LED streaming/idle transitions (register before start)
 ```

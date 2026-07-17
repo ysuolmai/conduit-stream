@@ -8,6 +8,17 @@
 extern "C" {
 #endif
 
+// Session lifecycle events for the status LED (spec §7). The RTSP task owns
+// RECORD/TEARDOWN; main wires this callback to system_led_set_state so the LED
+// reflects streaming vs idle without raop depending on the system component.
+typedef enum { RAOP_EV_STREAMING, RAOP_EV_IDLE } raop_event_t;
+typedef void (*raop_event_cb_t)(raop_event_t ev);
+
+// Register a callback fired on RECORD (STREAMING) and on TEARDOWN / idle-reclaim
+// (IDLE). NULL clears it. Call before raop_server_start(). Invoked from the RTSP
+// task; keep the callback short and non-blocking.
+void raop_set_event_cb(raop_event_cb_t cb);
+
 // Start the RTSP server task (listens on RAOP_RTSP_PORT = 5000). Safe to call
 // once. Runs raop_crypto_init() internally on first start; if the crypto self-
 // test fails the server is NOT started (we cannot negotiate without the key).

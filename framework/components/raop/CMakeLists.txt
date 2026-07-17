@@ -26,6 +26,10 @@ idf_component_register(
          "src/rtp_resend.c"
          "src/rtp_timing.c"
          "src/raop_rtp.c"
+         "src/raop_volume.c"
+         "src/dmap.c"
+         "src/setparam.c"
+         "src/raop_metadata.c"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "src"
     PRIV_REQUIRES mbedtls lwip esp_hw_support esp_timer discovery alac audio

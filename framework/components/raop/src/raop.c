@@ -39,10 +39,20 @@
 #include "raop_crypto.h"
 #include "rtsp_session.h"
 #include "raop_rtp.h"       // Phase 3 RTP receive/decrypt/decode task
-#include "audio.h"          // diag-tone handoff (single-producer arbitration)
+#include "audio.h"          // diag-tone handoff + audio_set_volume (Phase 5)
 #include "mdns_service.h"   // RAOP_RTSP_PORT
+#include "setparam.h"       // Phase 5: SET_PARAMETER Content-Type dispatch
+#include "raop_volume.h"    // Phase 5: "volume:"/"progress:" line parsers
+#include "dmap.h"           // Phase 5: DMAP/DAAP TLV metadata parser
+#include "raop_metadata.h"  // Phase 5: current-track store (log on change)
 
 static const char *TAG = "raop";
+
+// Session lifecycle callback for the status LED (spec §7). Set by main before
+// start; fired from the RTSP task on RECORD (STREAMING) and teardown (IDLE).
+static raop_event_cb_t s_ev_cb = NULL;
+
+void raop_set_event_cb(raop_event_cb_t cb) { s_ev_cb = cb; }
 
 #define RAOP_RX_CAP 2048
 
@@ -66,7 +76,9 @@ static void session_teardown_full(void) {
     if (raop_rtp_stop()) {
         audio_diag_tone_start();   // resume the known-good tone in the streaming gap
     }
+    raop_metadata_clear();         // forget the last now-playing (spec §5b)
     raop_session_reset(&s_session);
+    if (s_ev_cb) s_ev_cb(RAOP_EV_IDLE);   // LED -> CONNECTED_IDLE (no live stream)
 }
 
 // ---------------------------------------------------------------------------
@@ -189,6 +201,43 @@ static void handle_setup(int fd, const rtsp_request_t *req, int cseq) {
     send_response(fd, 200, "OK", cseq, extra, NULL, 0);
 }
 
+// Handle SET_PARAMETER (spec §5b). Dispatch on Content-Type (untrusted input,
+// §9: every parsed length bounded by the pure parsers): text/parameters carries
+// the volume slider (+ optional progress); application/x-dmap-tagged carries the
+// DMAP/DAAP track metadata; artwork (image/*) and anything else is ACKed + ignored.
+// Always answers 200 OK — a sender that gets no ack for a control message stalls.
+static void handle_set_parameter(int fd, const rtsp_request_t *req, int cseq) {
+    const char *ct = rtsp_header_get(req, "Content-Type");
+    switch (setparam_classify(ct)) {
+        case SETPARAM_VOLUME: {
+            float db;
+            if (req->body && raop_parse_volume(req->body, req->body_len, &db)) {
+                audio_set_volume(db);            // software gain in the playback drain
+            }
+            uint32_t s, c, e;
+            if (req->body && raop_parse_progress(req->body, req->body_len, &s, &c, &e)) {
+                // Three RTP timestamps @44100 Hz; log elapsed/total once (free-run
+                // receiver: no seek UI, values are otherwise ignored).
+                ESP_LOGI(TAG, "progress %us / %us", (unsigned)((c - s) / 44100),
+                         (unsigned)((e - s) / 44100));
+            }
+            break;
+        }
+        case SETPARAM_METADATA: {
+            if (req->body && req->body_len) {
+                dmap_meta_t m;
+                dmap_parse((const uint8_t *)req->body, req->body_len, &m);
+                raop_metadata_update(&m);        // logs "now playing" on change
+            }
+            break;
+        }
+        case SETPARAM_OTHER:
+        default:
+            break;                               // artwork / unknown: ignore (Phase 5 scope)
+    }
+    send_response(fd, 200, "OK", cseq, NULL, NULL, 0);
+}
+
 // Dispatch one parsed request. Returns true if the connection should be closed
 // afterwards (TEARDOWN).
 static bool dispatch(int fd, const rtsp_request_t *req) {
@@ -216,6 +265,7 @@ static bool dispatch(int fd, const rtsp_request_t *req) {
             audio_diag_tone_stop();
             if (raop_rtp_start(&s_session) == 0) {
                 s_session.state = RAOP_RECORDING;
+                if (s_ev_cb) s_ev_cb(RAOP_EV_STREAMING);   // LED -> STREAMING (green)
                 ESP_LOGI(TAG, "RECORD: RTP decode streaming (first AirPlay audio)");
             } else {
                 ESP_LOGE(TAG, "RECORD: RTP start failed; resuming diag tone");
@@ -223,12 +273,15 @@ static bool dispatch(int fd, const rtsp_request_t *req) {
             }
             send_response(fd, 200, "OK", cseq, "Audio-Latency: 11025\r\n", NULL, 0);
         }
+    } else if (strcmp(req->method, "SET_PARAMETER") == 0) {
+        // Phase 5: volume (software gain), DAAP metadata, progress. Dispatches on
+        // Content-Type; always acks 200. Must NOT tear the decoder down.
+        handle_set_parameter(fd, req, cseq);
     } else if (strcmp(req->method, "FLUSH") == 0 ||
                strcmp(req->method, "PAUSE") == 0 ||
-               strcmp(req->method, "SET_PARAMETER") == 0 ||
                strcmp(req->method, "GET_PARAMETER") == 0) {
         // FLUSH affects buffering only (jitter buffer is Phase 4) and must NOT
-        // tear the decoder down; volume/metadata (Phase 5) land later. Ack now.
+        // tear the decoder down. Ack now.
         send_response(fd, 200, "OK", cseq, NULL, NULL, 0);
     } else if (strcmp(req->method, "TEARDOWN") == 0) {
         session_teardown_full();   // stop decoder, resume tone, reset session

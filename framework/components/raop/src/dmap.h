@@ -2,7 +2,9 @@
 // SET_PARAMETER body — [4 ASCII code][BE32 length][value] tuples — extracting
 // minm=title, asar=artist, asal=album as bounded UTF-8 strings. Recurses into the
 // mlit listing-item container (senders may or may not wrap fields — the recursion
-// handles both). Every length is bounded against the body (untrusted, spec §9):
+// handles both) up to a fixed depth cap (real senders nest <=1; the cap bounds the
+// stack against a crafted nested-mlit chain, spec §9). Every length is bounded
+// against the body (untrusted, spec §9):
 // truncated/overrunning tags stop the walk, no read past the buffer, no allocation.
 // No ESP-IDF deps -> host-unit-testable. Codes + layout cited to shairport rtsp.c.
 #pragma once

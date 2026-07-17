@@ -68,9 +68,49 @@ void test_long_value_bounded(void){        // > DMAP_STR_MAX truncates, no overf
 void test_empty_body(void){
     dmap_meta_t m; TEST_ASSERT_EQUAL_INT(0, dmap_parse((const uint8_t*)"", 0, &m));
 }
+
+// Wrap `payload` in `levels` nested mlit containers (each length encompasses the
+// child), placing the result in `dst`. Returns the total encoded length.
+static size_t build_nested(uint8_t *dst, int levels,
+                           const uint8_t *payload, size_t plen){
+    size_t total = (size_t)levels * 8 + plen;
+    memcpy(dst + (size_t)levels * 8, payload, plen);
+    for (int i = levels - 1; i >= 0; i--){
+        size_t h = (size_t)i * 8;
+        uint32_t child = (uint32_t)(total - (h + 8));      // value = all bytes after hdr
+        dst[h+0]='m'; dst[h+1]='l'; dst[h+2]='i'; dst[h+3]='t';
+        dst[h+4]=(child>>24)&0xff; dst[h+5]=(child>>16)&0xff;
+        dst[h+6]=(child>>8)&0xff;  dst[h+7]=child&0xff;
+    }
+    return total;
+}
+void test_nested_within_cap(void){         // 4 nested mlit: field still reached
+    const uint8_t minm[] = {'m','i','n','m',0,0,0,2,'H','i'};
+    uint8_t b[64]; size_t n = build_nested(b, 4, minm, sizeof(minm));
+    dmap_meta_t m; int c = dmap_parse(b, n, &m);
+    TEST_ASSERT_EQUAL_INT(1, c);
+    TEST_ASSERT_EQUAL_STRING("Hi", m.title);
+}
+void test_nested_beyond_cap(void){         // 5 nested mlit: descent stops, field unseen
+    const uint8_t minm[] = {'m','i','n','m',0,0,0,2,'H','i'};
+    uint8_t b[64]; size_t n = build_nested(b, 5, minm, sizeof(minm));
+    dmap_meta_t m; int c = dmap_parse(b, n, &m);
+    TEST_ASSERT_EQUAL_INT(0, c);            // capped: no crash, field not extracted
+    TEST_ASSERT_FALSE(m.has_title);
+}
+void test_deep_nesting_no_overflow(void){  // crafted ~250-deep chain must not recurse away
+    const uint8_t minm[] = {'m','i','n','m',0,0,0,2,'H','i'};
+    static uint8_t b[2100];                 // 250*8+10 = 2010, under RAOP_RX_CAP-ish
+    size_t n = build_nested(b, 250, minm, sizeof(minm));
+    dmap_meta_t m; int c = dmap_parse(b, n, &m);
+    TEST_ASSERT_EQUAL_INT(0, c);            // depth cap => bounded recursion, no overflow
+    TEST_ASSERT_FALSE(m.has_title);
+}
 int main(void){ UNITY_BEGIN();
     RUN_TEST(test_flat_minm); RUN_TEST(test_flat_all_three); RUN_TEST(test_mlit_wrapped);
     RUN_TEST(test_unknown_tags_skipped); RUN_TEST(test_truncated_header);
     RUN_TEST(test_length_overruns_body); RUN_TEST(test_empty_value_clears);
     RUN_TEST(test_long_value_bounded); RUN_TEST(test_empty_body);
+    RUN_TEST(test_nested_within_cap); RUN_TEST(test_nested_beyond_cap);
+    RUN_TEST(test_deep_nesting_no_overflow);
     return UNITY_END(); }

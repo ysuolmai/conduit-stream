@@ -4,6 +4,16 @@
 
 > A personal experiment: a from-scratch **AirPlay 1 (RAOP) receiver** on an ESP32-S3, designed, built, and debugged live against a real iPhone and Mac. It's not a product — it's a "can a microcontroller pretend to be an AirPort Express?" experiment. It can.
 
+## Why I built this
+
+The Harman Kardon Aura Studio 3 sounds great — and has no Wi-Fi. AUX and Bluetooth only. I just wanted to AirPlay to it.
+
+The market's answer is a Wi-Fi audio streamer (WiiM and friends). The sleekest one I found was ~$100 — for a box whose whole job is to put audio on a 3.5 mm jack.
+
+My first hack was an old Android phone wired into the AUX. It worked, but keeping it powered, awake, and reliable was its own running battle. Wrong tool.
+
+So I built the thing that should exist: a ~$6 microcontroller that *is* the Wi-Fi endpoint. No phone, no $100 box, no cloud, no account — just the speaker, an ESP32, and a DAC.
+
 ## Status
 
 **Works.** An iPhone or Mac discovers *Conduit* on the network, connects, and streams lossless ALAC audio through the DAC into a powered speaker (a Harman Kardon Aura Studio 3, in my case).

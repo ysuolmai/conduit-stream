@@ -73,10 +73,22 @@ pio run -e esp32-s3-n4r2-pcm5102a -t upload
 pio test -e native                     # run the host unit tests
 ```
 
-On first boot, join the open **MiniSpeaker-XXX** setup network. The captive page
-lists nearby 2.4 GHz networks; choose one, enter its password, and save. The
-device restarts and the same **MiniSpeaker-XXX** name appears in the AirPlay menu.
-If the captive page does not open automatically, browse to `http://192.168.4.1/`.
+If no Wi-Fi SSID has been saved, the device opens the **MiniSpeaker-XXX** setup
+network automatically. The captive page lists nearby 2.4 GHz networks; choose
+one, enter its password, and save. The device restarts and the same
+**MiniSpeaker-XXX** name appears in the AirPlay menu. If the captive page does
+not open automatically, browse to `http://192.168.4.1/`.
+
+Once configured, boot goes directly to the saved network: SoftAP, DNS and HTTP
+stay off during normal AirPlay operation. To reconfigure Wi-Fi or update the
+firmware, release BOOT after power-up, then hold BOOT for 3 seconds. The device
+restarts into the setup network for that boot only. Existing Wi-Fi credentials
+remain intact unless **Save and restart** is pressed, so leaving the portal or
+power-cycling without saving returns to the old network.
+
+The setup page also accepts a firmware upload. Use the `*-ota.bin` matching the
+connected audio board. A successful update preserves the NVS partition and its
+saved Wi-Fi credentials.
 
 ## Firmware downloads
 
@@ -84,11 +96,25 @@ Each version tag triggers one GitHub Actions run that builds both supported
 variants and publishes one GitHub Release containing:
 
 - `minispeaker-esp32s3-n4r2-pcm5102a.bin`
+- `minispeaker-esp32s3-n4r2-pcm5102a-ota.bin`
 - `minispeaker-esp32s3-n4r2-max98357a.bin`
+- `minispeaker-esp32s3-n4r2-max98357a-ota.bin`
 - `SHA256SUMS`
 
-Download the file matching the connected audio board from the repository's
-Releases page. Each file is a merged image intended to be flashed at address 0.
+The two files without `-ota` are merged images for USB flashing at address
+`0x0`. The `-ota.bin` files contain only the application and are exclusively for
+the setup page; do not interchange PCM5102A and MAX98357A variants.
+
+## Onboard LEDs
+
+The ESP32-S3 Super Mini has three LEDs. The WS2812 RGB LED and the discrete red
+LED share GPIO48, so WS2812 status data can make the red LED flicker briefly.
+Five seconds after Wi-Fi connects, firmware clears the RGB LED, releases its RMT
+driver, and holds GPIO48 low so both controllable LEDs remain off.
+
+The blue LED is the battery-charger status indicator and has no ESP32 GPIO. It
+is on while charging, off with a connected battery when not charging, and may
+blink when no battery is present; firmware cannot turn it off.
 
 ## The interesting part
 
@@ -106,7 +132,7 @@ Four bugs only a real device could surface (build-green + 111 host tests all pas
 |---------|------|
 | 0.0.1 | 440 Hz test tone through the DAC ✅ |
 | 0.1–0.2 | **AirPlay 1 receiver ✅ (this)** |
-| next | OTA updates, artwork, a small control UI |
+| next | Artwork and a small control UI |
 
 ## Credits
 

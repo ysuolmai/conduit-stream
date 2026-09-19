@@ -9,6 +9,7 @@
 #include <string.h>
 
 #define NS "conduit"
+#define KEY_SETUP_ONCE "setup_once"
 
 static const char *TAG = "sys_cfg";
 
@@ -94,4 +95,39 @@ esp_err_t system_config_save_wifi(const char *ssid, const char *password) {
         ESP_LOGI(TAG, "saved Wi-Fi credentials for SSID '%s'", s_ssid);
     }
     return err;
+}
+
+esp_err_t system_config_request_setup_mode(void) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+
+    err = nvs_set_u8(h, KEY_SETUP_ONCE, 1);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+bool system_config_take_setup_mode_request(void) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "could not read setup request: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    uint8_t requested = 0;
+    err = nvs_get_u8(h, KEY_SETUP_ONCE, &requested);
+    if (err == ESP_OK && requested == 1) {
+        esp_err_t erase_err = nvs_erase_key(h, KEY_SETUP_ONCE);
+        if (erase_err == ESP_OK) erase_err = nvs_commit(h);
+        if (erase_err != ESP_OK) {
+            ESP_LOGW(TAG, "could not consume setup request: %s",
+                     esp_err_to_name(erase_err));
+        }
+    } else if (err != ESP_ERR_NVS_NOT_FOUND && err != ESP_OK) {
+        ESP_LOGW(TAG, "could not read setup request: %s", esp_err_to_name(err));
+    }
+    nvs_close(h);
+    return err == ESP_OK && requested == 1;
 }

@@ -40,10 +40,24 @@ conduit: psram: 2.0 MB (quad)
 conduit: i2s: std TX up @ 44100 Hz, 16-bit stereo (BCLK=12, LRCK=13, DOUT=11, MCLK=unused)
 ```
 
-On first boot, connect a phone to the open `MiniSpeaker-XXX` hotspot and select a
-2.4 GHz network in the captive page. Browse to `http://192.168.4.1/` if the page
-does not open automatically. After saving, the device restarts, advertises
-`_raop._tcp`, and appears under the same `MiniSpeaker-XXX` name in AirPlay.
+With no saved SSID, connect a phone to the open `MiniSpeaker-XXX` hotspot and
+select a 2.4 GHz network in the captive page. Browse to `http://192.168.4.1/` if
+the page does not open automatically. After saving, the device restarts,
+advertises `_raop._tcp`, and appears under the same `MiniSpeaker-XXX` name in
+AirPlay. On later boots it connects directly; SoftAP and HTTP remain off.
+
+Release BOOT after power-up, then hold it for 3 seconds to reboot into the setup
+portal for one boot. This does not erase the saved SSID/password. Saving new
+credentials replaces them; rebooting without saving returns to the old network.
+The same page can install the matching `*-ota.bin` release file while preserving
+Wi-Fi settings.
+
+## Onboard LEDs
+
+There are three LEDs on this board. The WS2812 RGB LED and red LED share GPIO48;
+firmware turns both off and holds that pin low five seconds after connecting.
+The blue battery-charge LED has no GPIO and cannot be controlled in software.
+It can remain on while charging or blink when USB is connected without a battery.
 
 > Native-USB S3 devkits: if the monitor is blank, the console may be on USB
 > Serial/JTAG. See the commented flags in `platformio.ini` and the note in

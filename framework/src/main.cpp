@@ -40,6 +40,7 @@
 #include "nvs_flash.h"
 #include "system_config.h"
 #include "system_led.h"
+#include "setup_button.h"
 #include "wifi.h"
 #include "mdns_service.h"
 #include "raop.h"
@@ -142,16 +143,22 @@ extern "C" void app_main(void)
     }
     ESP_ERROR_CHECK(nvs_err);
     ESP_ERROR_CHECK(system_config_init());
+    const bool setup_requested = system_config_take_setup_mode_request();
 
     // Status LED (spec §7). Guarded: a missing/unwired WS2812 never crashes boot.
     system_led_init();
 
-    if (system_config_has_credentials()) {
+    if (system_config_has_credentials() && !setup_requested) {
         system_led_set_state(LED_ST_WIFI_CONNECTING);   // amber while connecting
+        ESP_ERROR_CHECK(setup_button_start());
         wifi_start(on_got_ip);  // on GOT_IP -> LED blue + mdns_advertise_raop(...)
     } else {
         system_led_set_state(LED_ST_NEEDS_CREDS);
-        ESP_LOGW(TAG, "no Wi-Fi credentials; starting captive setup portal");
+        if (setup_requested) {
+            ESP_LOGI(TAG, "BOOT setup request; keeping saved Wi-Fi until new settings are saved");
+        } else {
+            ESP_LOGW(TAG, "no Wi-Fi credentials; starting captive setup portal");
+        }
         wifi_start_provisioning();
     }
 

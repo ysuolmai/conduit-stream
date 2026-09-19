@@ -1,12 +1,13 @@
 #include "system_led.h"
+#include "driver/gpio.h"
 #include "led_strip.h"
 #include "esp_log.h"
 #include <stdbool.h>
 
-// DevKitC-1 onboard WS2812. A few early/variant revisions route it to GPIO38;
-// change this #define if the status LED stays dark on your board (it fails safe:
-// a wrong pin is a silently-dark, non-crashing LED — see the guard in _init).
-#define STATUS_LED_GPIO 48
+// On the ESP32-S3 Super Mini, the WS2812 data input and a discrete red LED share
+// GPIO48. WS2812 waveforms can visibly flicker the red LED, so disable() deletes
+// the RMT device and holds the pin low after the short boot/status period.
+#define STATUS_LED_GPIO GPIO_NUM_48
 
 static const char *TAG = "led";
 static led_strip_handle_t s_led = NULL;
@@ -50,5 +51,11 @@ void system_led_disable(void) {
     if (!s_led || s_disabled) return;
     s_disabled = true;
     led_strip_clear(s_led);
-    ESP_LOGI(TAG, "status LED disabled");
+    led_strip_del(s_led);
+    s_led = NULL;
+
+    gpio_reset_pin(STATUS_LED_GPIO);
+    gpio_set_direction(STATUS_LED_GPIO, GPIO_MODE_OUTPUT);
+    gpio_set_level(STATUS_LED_GPIO, 0);
+    ESP_LOGI(TAG, "GPIO48 RGB/red LEDs disabled and held low");
 }

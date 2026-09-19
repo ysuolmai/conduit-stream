@@ -29,6 +29,11 @@ bool        system_config_has_credentials(void);
 // restart; the AirPlay name is always derived from the device MAC.
 esp_err_t   system_config_save_wifi(const char *ssid, const char *password);
 
+// Persist a one-shot request to open the setup portal on the next boot. Taking
+// the request clears only this flag; saved Wi-Fi credentials are never touched.
+esp_err_t   system_config_request_setup_mode(void);
+bool        system_config_take_setup_mode_request(void);
+
 #ifdef __cplusplus
 }
 #endif

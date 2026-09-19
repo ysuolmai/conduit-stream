@@ -1,6 +1,6 @@
-// Status LED (spec §7): drives the ESP32-S3-DevKitC-1 onboard WS2812 on GPIO48 via
-// the espressif/led_strip managed component. Re-exports the pure state enum from
-// led_state.h so callers (main, the raop event cb) speak in states, not colours.
+// Status LED (spec §7): drives the ESP32-S3 Super Mini onboard WS2812 on GPIO48
+// via the espressif/led_strip managed component. The board's discrete red LED
+// shares that pin; its charge-status LED is controlled only by charger hardware.
 #pragma once
 #include "led_state.h"     // re-export system_led_state_t
 
@@ -18,8 +18,8 @@ void system_led_init(void);
 // low-rate tasks only (boot, Wi-Fi event, RTSP) — never from the audio drain/ISR.
 void system_led_set_state(system_led_state_t st);
 
-// Turn the programmable LED off and ignore all later state updates. This also
-// prevents the GPIO48 companion LED from flickering on shared-data boards.
+// Turn the programmable LED off, release RMT, hold GPIO48 low, and ignore later
+// state updates. This also stops the shared red LED from flickering.
 void system_led_disable(void);
 
 #ifdef __cplusplus

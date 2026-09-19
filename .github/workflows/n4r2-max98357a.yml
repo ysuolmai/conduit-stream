@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - n4r2-max98357a
+      - main
 
 permissions:
   contents: read

@@ -12,8 +12,12 @@
 #include <stdlib.h>   // abort()
 #include <stdatomic.h>
 
-// ~2 s of 44.1 kHz stereo in PSRAM.
+// Keep the normal two-second jitter buffer, but reduce it on 2 MB PSRAM boards.
+#ifdef CONFIG_CONDUIT_SMALL_MEMORY
+#define RING_CAPACITY_FRAMES AUDIO_SAMPLE_RATE_HZ
+#else
 #define RING_CAPACITY_FRAMES (AUDIO_SAMPLE_RATE_HZ * 2)
+#endif
 
 static const char     *TAG = "audio";
 static audio_ringbuf_t s_ring;
@@ -83,7 +87,7 @@ void audio_init(void) {
         ESP_LOGE(TAG, "playback task create failed");
         abort();  // fail loud: audio is dead without the drain task
     }
-    ESP_LOGI(TAG, "audio: ring=%u frames (~2s PSRAM), playback task up on core %d",
+    ESP_LOGI(TAG, "audio: ring=%u frames, playback task up on core %d",
              (unsigned) RING_CAPACITY_FRAMES, AUDIO_PIN_CORE);
 }
 

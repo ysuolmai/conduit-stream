@@ -35,6 +35,23 @@ purple GY-PCM5102 breakout these are the pads/jumpers on the back:
 We deliberately do **not** wire MCLK. `gpio_cfg.mclk = I2S_GPIO_UNUSED` in the
 firmware, and SCK->GND on the DAC is the matching half of that decision.
 
+## ESP32-S3 N4R2 + MAX98357A
+
+The experimental N4R2 target uses the MAX98357A I2S mono amplifier instead of
+the PCM5102A line-out DAC:
+
+| ESP32-S3 | MAX98357A | Notes |
+|----------|-----------|-------|
+| GPIO11   | DIN       | I2S data |
+| GPIO12   | BCLK      | bit clock |
+| GPIO13   | LRC/WS    | word select |
+| 5V or 3.3V | VIN/VCC | follow the breakout marking |
+| GND      | GND       | common ground |
+
+Tie `SD/EN` high if the module has no pull-up. Connect the speaker between
+`SPK+` and `SPK-`; neither output is ground-referenced. The firmware mixes
+AirPlay stereo to mono before I2S so a mono amplifier does not lose one side.
+
 ## "Project Gravity" warning
 
 Digital I2S is more forgiving than analog, but BCK / LRCK / DIN still need solid,

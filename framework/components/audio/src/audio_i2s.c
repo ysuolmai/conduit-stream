@@ -4,9 +4,9 @@
 #include "freertos/FreeRTOS.h"
 #include "esp_log.h"
 
-#define I2S_DOUT_GPIO GPIO_NUM_5   // -> PCM5102A DIN
-#define I2S_BCLK_GPIO GPIO_NUM_6   // -> PCM5102A BCK
-#define I2S_LRCK_GPIO GPIO_NUM_7   // -> PCM5102A LRCK
+#define I2S_DOUT_GPIO ((gpio_num_t)CONFIG_CONDUIT_I2S_DOUT_GPIO)
+#define I2S_BCLK_GPIO ((gpio_num_t)CONFIG_CONDUIT_I2S_BCLK_GPIO)
+#define I2S_LRCK_GPIO ((gpio_num_t)CONFIG_CONDUIT_I2S_LRCK_GPIO)
 
 static const char *TAG = "audio_i2s";
 static i2s_chan_handle_t s_tx = NULL;
@@ -21,7 +21,7 @@ void audio_i2s_init(void) {
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
                         I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
         .gpio_cfg = {
-            .mclk = I2S_GPIO_UNUSED,   // no MCLK -> PCM5102A uses SCK->GND PLL
+            .mclk = I2S_GPIO_UNUSED,   // MAX98357A does not need MCLK
             .bclk = I2S_BCLK_GPIO,
             .ws   = I2S_LRCK_GPIO,
             .dout = I2S_DOUT_GPIO,
@@ -32,9 +32,15 @@ void audio_i2s_init(void) {
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(s_tx, &std_cfg));
     ESP_ERROR_CHECK(i2s_channel_enable(s_tx));
 
-    ESP_LOGI(TAG, "i2s: std TX up @ %d Hz, 16-bit stereo "
+    ESP_LOGI(TAG, "i2s: std TX up @ %d Hz, 16-bit %s "
                   "(BCLK=%d, LRCK=%d, DOUT=%d, MCLK=unused)",
-             AUDIO_SAMPLE_RATE_HZ, I2S_BCLK_GPIO, I2S_LRCK_GPIO, I2S_DOUT_GPIO);
+             AUDIO_SAMPLE_RATE_HZ,
+#ifdef CONFIG_CONDUIT_MONO_OUTPUT
+             "mono-mix",
+#else
+             "stereo",
+#endif
+             (int)I2S_BCLK_GPIO, (int)I2S_LRCK_GPIO, (int)I2S_DOUT_GPIO);
 }
 
 size_t audio_i2s_write(const int16_t *frames, size_t n_frames) {

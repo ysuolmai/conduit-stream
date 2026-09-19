@@ -1,0 +1,36 @@
+name: N4R2 MAX98357A firmware
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - n4r2-max98357a
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Build N4R2 MAX98357A firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5
+          target: esp32s3
+          command: >
+            cd framework &&
+            idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.n4r2-max98357a" build &&
+            cd build &&
+            esptool.py --chip esp32s3 merge_bin --format raw -o merged-firmware.bin $(cat flash_args) &&
+            cp merged-firmware.bin ../../airplay1-conduit-esp32s3-n4r2-max98357a.bin
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: firmware-conduit-esp32s3-n4r2-max98357a
+          path: airplay1-conduit-esp32s3-n4r2-max98357a.bin

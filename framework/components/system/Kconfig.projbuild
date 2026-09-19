@@ -1,5 +1,34 @@
 menu "Conduit Stream Configuration"
 
+    config CONDUIT_SMALL_MEMORY
+        bool "Use reduced memory profile"
+        default n
+        help
+            Reduce the PCM and RTP reorder buffers for ESP32-S3 modules with
+            only 2 MB of PSRAM.
+
+    config CONDUIT_I2S_DOUT_GPIO
+        int "I2S data output GPIO"
+        default 5
+        range 0 48
+
+    config CONDUIT_I2S_BCLK_GPIO
+        int "I2S bit clock GPIO"
+        default 6
+        range 0 48
+
+    config CONDUIT_I2S_LRCK_GPIO
+        int "I2S word select GPIO"
+        default 7
+        range 0 48
+
+    config CONDUIT_MONO_OUTPUT
+        bool "Mix stereo input to mono before I2S output"
+        default n
+        help
+            Mix left and right AirPlay channels before sending them to an
+            I2S mono amplifier such as the MAX98357A.
+
     config CONDUIT_WIFI_SSID
         string "Wi-Fi SSID (seed for NVS on first boot)"
         default ""

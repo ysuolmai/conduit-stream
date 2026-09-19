@@ -9,6 +9,20 @@
 
 #define PLAYBACK_CHUNK_FRAMES 256
 
+static void audio_mix_mono(int16_t *samples, size_t frames) {
+#ifdef CONFIG_CONDUIT_MONO_OUTPUT
+    for (size_t i = 0; i < frames; ++i) {
+        int32_t mixed = (int32_t)samples[i * 2] + samples[i * 2 + 1];
+        int16_t mono = (int16_t)(mixed / 2);
+        samples[i * 2] = mono;
+        samples[i * 2 + 1] = mono;
+    }
+#else
+    (void)samples;
+    (void)frames;
+#endif
+}
+
 // Drains the ring into I2S. On underrun, writes a chunk of silence so the DAC
 // keeps clocking cleanly instead of stalling or replaying stale samples.
 //
@@ -80,6 +94,7 @@ void audio_playback_task(void *arg) {
 
         size_t got = audio_ringbuf_read(ring, chunk, PLAYBACK_CHUNK_FRAMES);
         if (got > 0) {
+            audio_mix_mono(chunk, got);
             if (fix != AUDIO_VOL_UNITY) audio_volume_apply(chunk, got * 2, fix);
             audio_i2s_write(chunk, got);
         } else {

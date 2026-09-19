@@ -72,8 +72,13 @@ static const char *TAG = "raop_rtp";
 // budget for how long a gap is held before conceal. In steady state the drain
 // keeps it near-empty (the PCM ring backpressures), so it adds no latency; it only
 // fills when loss forces a hold so retransmit has time to land.
+#ifdef CONFIG_CONDUIT_SMALL_MEMORY
+#define REORDER_WINDOW 128
+#define REORDER_HOLD   96       // ~0.75 s hold with the reduced PSRAM profile
+#else
 #define REORDER_WINDOW 256
 #define REORDER_HOLD   192      // conceal after holding ~1.5 s (retransmit RTT ≪ this)
+#endif
 
 // Don't re-request the same front-gap more than this often while a retransmit is in
 // flight (keeps the control channel from flooding on a persistent hole).

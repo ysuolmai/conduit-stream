@@ -3,4 +3,17 @@
 idf_component_register(
     SRCS "main.cpp" "udp_log.cpp"
     INCLUDE_DIRS "."
+    REQUIRES
+        audio
+        discovery
+        esp_psram
+        esp_system
+        freertos
+        log
+        lwip
+        network
+        nvs_flash
+        raop
+        spi_flash
+        system
 )

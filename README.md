@@ -86,6 +86,10 @@ restarts into the setup network for that boot only. Existing Wi-Fi credentials
 remain intact unless **Save and restart** is pressed, so leaving the portal or
 power-cycling without saving returns to the old network.
 
+If a saved network does not produce an IP address within 20 seconds, the device
+also reboots into the setup SoftAP instead of retrying forever. The saved SSID
+and password are still retained until new settings are explicitly saved.
+
 The setup page also accepts a firmware upload. Use the `*-ota.bin` matching the
 connected audio board. A successful update preserves the NVS partition and its
 saved Wi-Fi credentials.

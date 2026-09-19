@@ -46,14 +46,36 @@
 #include "raop.h"
 #include "udp_log.h"   // DEBUG: mirror logs over UDP (serial console is unreliable)
 
+#include <atomic>
+
 static const char *TAG = "conduit";
 static bool s_led_off_task_started = false;
+static std::atomic_bool s_wifi_connected{false};
+
+#define WIFI_CONNECT_TIMEOUT_MS 20000
 
 static void led_off_task(void *arg)
 {
     (void)arg;
     vTaskDelay(pdMS_TO_TICKS(5000));
     system_led_disable();
+    vTaskDelete(NULL);
+}
+
+static void wifi_fallback_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(WIFI_CONNECT_TIMEOUT_MS));
+    if (!s_wifi_connected.load(std::memory_order_relaxed)) {
+        ESP_LOGW(TAG, "no IP after %d ms; rebooting into setup portal",
+                 WIFI_CONNECT_TIMEOUT_MS);
+        esp_err_t err = system_config_request_setup_mode();
+        if (err == ESP_OK) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            esp_restart();
+        }
+        ESP_LOGE(TAG, "could not request setup portal: %s", esp_err_to_name(err));
+    }
     vTaskDelete(NULL);
 }
 
@@ -111,6 +133,7 @@ static void on_raop_event(raop_event_t ev)
 // now, so it is safe to advertise. Hostname "conduit" -> conduit.local.
 static void on_got_ip(void)
 {
+    s_wifi_connected.store(true, std::memory_order_relaxed);
     udp_log_init();   // DEBUG: start mirroring logs over UDP now that we have an IP
     system_led_set_state(LED_ST_CONNECTED_IDLE);   // Wi-Fi up, no stream yet (blue)
     mdns_advertise_raop("conduit", system_config_get_instance_name(), RAOP_RTSP_PORT);
@@ -152,6 +175,9 @@ extern "C" void app_main(void)
         system_led_set_state(LED_ST_WIFI_CONNECTING);   // amber while connecting
         ESP_ERROR_CHECK(setup_button_start());
         wifi_start(on_got_ip);  // on GOT_IP -> LED blue + mdns_advertise_raop(...)
+        if (xTaskCreate(wifi_fallback_task, "wifi_fallback", 2048, NULL, 3, NULL) != pdPASS) {
+            ESP_LOGE(TAG, "could not start Wi-Fi fallback timer");
+        }
     } else {
         system_led_set_state(LED_ST_NEEDS_CREDS);
         if (setup_requested) {

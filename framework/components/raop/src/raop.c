@@ -56,10 +56,10 @@ void raop_set_event_cb(raop_event_cb_t cb) { s_ev_cb = cb; }
 
 #define RAOP_RX_CAP 2048
 
-// Reclaim the single-session lock from a peer that stops talking without TEARDOWN
-// (spec §8 dead-RTSP detection; §9 unauthenticated-LAN DoS defense). Generous
-// enough to never interrupt a real OPTIONS->ANNOUNCE->SETUP->RECORD negotiation
-// (which completes in well under a second), yet bounded so the slot always frees.
+// Reclaim a pre-stream client that stops talking before RECORD. Once RECORDING,
+// audio normally flows only over UDP and the RTSP TCP connection can legitimately
+// stay quiet for the whole song; TCP EOF/keepalive or TEARDOWN then owns cleanup.
+// Applying this timeout to a live stream would stop every session after 30 seconds.
 #define RAOP_CLIENT_IDLE_MS 30000
 
 static TaskHandle_t     s_task     = NULL;
@@ -421,14 +421,14 @@ static void server_task(void *arg) {
             ESP_LOGE(TAG, "select failed: errno %d", errno);
             break;
         }
-        // Reclaim the single-session lock from a peer that went silent without
-        // TEARDOWN — out of range, crashed, or a LAN peer that connected to :5000
-        // and then sent nothing (spec §8 dead-RTSP detection; §9 DoS defense).
-        // Checked on every wake, including the select() timeout, so a peer that
-        // never triggers readability is still dropped.
+        // Reclaim only an incomplete handshake. During RECORDING the RTSP channel
+        // may be silent while UDP audio continues, so its inactivity is not a dead
+        // session signal. TCP EOF/keepalive and TEARDOWN still clean up live peers.
         if (client_fd >= 0 &&
+            s_session.state != RAOP_RECORDING &&
             (xTaskGetTickCount() - last_activity) >= pdMS_TO_TICKS(RAOP_CLIENT_IDLE_MS)) {
-            ESP_LOGW(TAG, "RTSP client idle > %d ms -> teardown", RAOP_CLIENT_IDLE_MS);
+            ESP_LOGW(TAG, "pre-stream RTSP client idle > %d ms -> teardown",
+                     RAOP_CLIENT_IDLE_MS);
             close(client_fd);
             client_fd = -1;
             session_teardown_full();

@@ -24,9 +24,11 @@ watermark keeps a multi-hour session from slowly underrunning.
 | `TEARDOWN` | Stop the RTP decoder, **resume the diag tone**, close the UDP sockets, reset the session to `IDLE`, release the single-session lock. |
 | _unknown_ | `501 Not Implemented`. |
 
-Every response echoes the request's `CSeq`. Every abnormal exit (idle-timeout,
-disconnect, buffer overflow, server stop) routes through `session_teardown_full()`,
-which performs the same decoder-stop + tone-resume + reset.
+Every response echoes the request's `CSeq`. A 30-second idle timeout applies only
+before `RECORD`; an active stream's RTSP channel may legitimately stay quiet while
+UDP audio continues. Disconnect, pre-stream timeout, buffer overflow, and server
+stop route through `session_teardown_full()`, which performs the same decoder-stop,
+tone-resume, and reset sequence.
 
 ## Phase 4 — RTP audio receive path (reorder + retransmit + timing + drift)
 

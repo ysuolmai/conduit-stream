@@ -34,6 +34,11 @@ The onboard WS2812 on **GPIO48** (ESP32-S3-DevKitC-1) reflects device state via 
 | `LED_ST_CONNECTED_IDLE` | blue | Wi-Fi up (GOT_IP), no live stream |
 | `LED_ST_STREAMING` | green | RAOP `RECORD` live |
 
+After the station receives an IP address, the programmable GPIO48 LED remains
+blue for five seconds and is then cleared and disabled until reboot. This avoids
+continuous distraction and prevents the companion LED found on some Super Mini
+boards from flickering when WS2812 data is sent.
+
 - `src/led_state.{c}` + `include/led_state.h` — **pure** state→(r,g,b) map (brightness
   ≤16; status indicator, not lighting), host-tested (`test/test_led_state`).
 - `src/system_led.c` + `include/system_led.h` — **guarded** led_strip glue:

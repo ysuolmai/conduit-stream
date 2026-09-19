@@ -46,6 +46,15 @@
 #include "udp_log.h"   // DEBUG: mirror logs over UDP (serial console is unreliable)
 
 static const char *TAG = "conduit";
+static bool s_led_off_task_started = false;
+
+static void led_off_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(5000));
+    system_led_disable();
+    vTaskDelete(NULL);
+}
 
 // -----------------------------------------------------------------------------
 static void log_boot_banner(void)
@@ -108,6 +117,13 @@ static void on_got_ip(void)
     // and negotiate (OPTIONS -> ANNOUNCE -> SETUP -> RECORD -> Phase 3 audio).
     raop_set_event_cb(on_raop_event);   // LED reflects streaming/idle (register once)
     raop_server_start();
+    if (!s_led_off_task_started) {
+        s_led_off_task_started = true;
+        if (xTaskCreate(led_off_task, "led_off", 2048, NULL, 2, NULL) != pdPASS) {
+            ESP_LOGW(TAG, "could not schedule status LED shutdown");
+            s_led_off_task_started = false;
+        }
+    }
 }
 
 // -----------------------------------------------------------------------------

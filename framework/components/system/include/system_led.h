@@ -18,6 +18,10 @@ void system_led_init(void);
 // low-rate tasks only (boot, Wi-Fi event, RTSP) — never from the audio drain/ISR.
 void system_led_set_state(system_led_state_t st);
 
+// Turn the programmable LED off and ignore all later state updates. This also
+// prevents the GPIO48 companion LED from flickering on shared-data boards.
+void system_led_disable(void);
+
 #ifdef __cplusplus
 }
 #endif

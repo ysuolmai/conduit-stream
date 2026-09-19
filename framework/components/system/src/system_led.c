@@ -1,6 +1,7 @@
 #include "system_led.h"
 #include "led_strip.h"
 #include "esp_log.h"
+#include <stdbool.h>
 
 // DevKitC-1 onboard WS2812. A few early/variant revisions route it to GPIO38;
 // change this #define if the status LED stays dark on your board (it fails safe:
@@ -9,6 +10,8 @@
 
 static const char *TAG = "led";
 static led_strip_handle_t s_led = NULL;
+static bool s_disabled = false;
+static int s_last_state = -1;
 
 void system_led_init(void) {
     if (s_led) return;   // idempotent
@@ -36,8 +39,16 @@ void system_led_init(void) {
 }
 
 void system_led_set_state(system_led_state_t st) {
-    if (!s_led) return;   // guarded no-op (init failed / no LED)
+    if (!s_led || s_disabled || s_last_state == (int)st) return;
     led_rgb_t c = led_state_color(st);
     led_strip_set_pixel(s_led, 0, c.r, c.g, c.b);
     led_strip_refresh(s_led);
+    s_last_state = (int)st;
+}
+
+void system_led_disable(void) {
+    if (!s_led || s_disabled) return;
+    s_disabled = true;
+    led_strip_clear(s_led);
+    ESP_LOGI(TAG, "status LED disabled");
 }

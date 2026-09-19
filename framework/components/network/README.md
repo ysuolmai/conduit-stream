@@ -18,7 +18,7 @@ run and an SSID is present):
   (500 ms doubling to 8 s); `IP_EVENT_STA_GOT_IP` -> log the IP, reset backoff,
   and fire the registered `wifi_got_ip_cb_t` (main uses it to start mDNS).
 - **Boot fallback** — if the initial connection has not obtained an IPv4 address
-  within 20 seconds, main stores a one-shot setup request and reboots. The next
+  within 15 seconds, main stores a one-shot setup request and reboots. The next
   boot opens the captive SoftAP without erasing the saved credentials.
 
 The RAOP RTSP/RTP transport plugin is still to come (Phase 2+).

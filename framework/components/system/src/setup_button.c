@@ -58,7 +58,9 @@ esp_err_t setup_button_start(void) {
     esp_err_t err = gpio_config(&config);
     if (err != ESP_OK) return err;
 
-    if (xTaskCreate(setup_button_task, "setup_button", 2048, NULL, 3, NULL) != pdPASS) {
+    // NVS commit is performed from this task after a long press. Keep enough
+    // stack for the NVS/flash call chain; 2 KB can reset before the flag lands.
+    if (xTaskCreate(setup_button_task, "setup_button", 4096, NULL, 3, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
     s_started = true;

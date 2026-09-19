@@ -52,7 +52,7 @@ static const char *TAG = "conduit";
 static bool s_led_off_task_started = false;
 static std::atomic_bool s_wifi_connected{false};
 
-#define WIFI_CONNECT_TIMEOUT_MS 20000
+#define WIFI_CONNECT_TIMEOUT_MS 15000
 
 static void led_off_task(void *arg)
 {
@@ -175,7 +175,8 @@ extern "C" void app_main(void)
         system_led_set_state(LED_ST_WIFI_CONNECTING);   // amber while connecting
         ESP_ERROR_CHECK(setup_button_start());
         wifi_start(on_got_ip);  // on GOT_IP -> LED blue + mdns_advertise_raop(...)
-        if (xTaskCreate(wifi_fallback_task, "wifi_fallback", 2048, NULL, 3, NULL) != pdPASS) {
+        // The fallback writes its one-shot flag through NVS before restarting.
+        if (xTaskCreate(wifi_fallback_task, "wifi_fallback", 4096, NULL, 3, NULL) != pdPASS) {
             ESP_LOGE(TAG, "could not start Wi-Fi fallback timer");
         }
     } else {

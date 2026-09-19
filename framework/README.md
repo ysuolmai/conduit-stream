@@ -52,7 +52,7 @@ credentials replaces them; rebooting without saving returns to the old network.
 The same page can install the matching `*-ota.bin` release file while preserving
 Wi-Fi settings.
 
-If the saved network does not provide an IP address within 20 seconds after
+If the saved network does not provide an IP address within 15 seconds after
 boot, firmware automatically reboots into that same one-shot setup portal. It
 does not erase the old credentials or retry indefinitely.
 

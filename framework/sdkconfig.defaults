@@ -4,6 +4,14 @@
 
 CONFIG_IDF_TARGET="esp32s3"
 
+# ALAC + AES decoding and RTP servicing need deterministic headroom.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
+
+# Six queued UDP datagrams is only about 48 ms of 352-frame RAOP packets. Allow
+# short Wi-Fi bursts to queue instead of dropping packets before the RTP task runs.
+CONFIG_LWIP_UDP_RECVMBOX_SIZE=32
+
 # --- 16 MB flash, QIO @ 80 MHz ---
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHFREQ_80M=y

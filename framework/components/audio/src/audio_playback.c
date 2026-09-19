@@ -8,6 +8,10 @@
 #include "esp_log.h"   // DEBUG: crackle diagnosis stats
 
 #define PLAYBACK_CHUNK_FRAMES 256
+// Match the latency advertised in the RECORD response (11025 frames @ 44.1 kHz).
+// Holding this much PCM before first output, and again after a real underrun,
+// absorbs normal Wi-Fi burstiness instead of turning it into audible gaps.
+#define PLAYBACK_PREFILL_FRAMES (AUDIO_SAMPLE_RATE_HZ / 4)
 
 static void audio_mix_mono(int16_t *samples, size_t frames) {
 #ifdef CONFIG_CONDUIT_MONO_OUTPUT
@@ -58,6 +62,7 @@ void audio_playback_task(void *arg) {
 
     // DEBUG: crackle diagnosis — count underruns / drift corrections per ~2 s window.
     uint32_t dbg_cycles = 0, dbg_underrun = 0, dbg_drop = 0, dbg_dup = 0, dbg_min_avail = 0xFFFFFFFF;
+    bool primed = false;
 
     for (;;) {
         // Software volume (spec §6e): one Q16.16 gain read per cycle, applied to
@@ -69,6 +74,21 @@ void audio_playback_task(void *arg) {
 
         // At most one single-frame drift correction per cycle, BEFORE the read.
         size_t avail = audio_ringbuf_available(ring);
+
+        // The RTP sender and I2S clock run independently. Do not start chasing the
+        // producer from an empty ring: accumulate the latency we advertised first.
+        // After a true underrun, use the same gate to recover with useful headroom.
+        if (!primed) {
+            if (avail < PLAYBACK_PREFILL_FRAMES) {
+                audio_i2s_write(silence, PLAYBACK_CHUNK_FRAMES);
+                continue;
+            }
+            primed = true;
+            ESP_LOGI("playback", "PCM primed: %u frames (%u ms)",
+                     (unsigned)avail,
+                     (unsigned)(PLAYBACK_PREFILL_FRAMES * 1000 / AUDIO_SAMPLE_RATE_HZ));
+        }
+
         if (avail < dbg_min_avail) dbg_min_avail = avail;
         switch (audio_drift_decide(avail, &drift_cfg)) {
             case AUDIO_DRIFT_DROP:
@@ -99,6 +119,9 @@ void audio_playback_task(void *arg) {
             audio_i2s_write(chunk, got);
         } else {
             dbg_underrun++;
+            primed = false;
+            ESP_LOGW("playback", "PCM underrun; buffering %u frames before resume",
+                     (unsigned)PLAYBACK_PREFILL_FRAMES);
             audio_i2s_write(silence, PLAYBACK_CHUNK_FRAMES);
         }
 

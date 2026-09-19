@@ -44,7 +44,6 @@
 #include "wifi.h"
 #include "mdns_service.h"
 #include "raop.h"
-#include "udp_log.h"   // DEBUG: mirror logs over UDP (serial console is unreliable)
 
 #include <atomic>
 
@@ -134,7 +133,6 @@ static void on_raop_event(raop_event_t ev)
 static void on_got_ip(void)
 {
     s_wifi_connected.store(true, std::memory_order_relaxed);
-    udp_log_init();   // DEBUG: start mirroring logs over UDP now that we have an IP
     system_led_set_state(LED_ST_CONNECTED_IDLE);   // Wi-Fi up, no stream yet (blue)
     mdns_advertise_raop("conduit", system_config_get_instance_name(), RAOP_RTSP_PORT);
     // Phase 2: now actually man the advertised RTSP port so a sender can connect

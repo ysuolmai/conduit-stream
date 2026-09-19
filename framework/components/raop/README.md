@@ -44,6 +44,10 @@ drain in seq order → decrypt → decode → feed. Late / out-of-order / recove
 packets slot into place and flow through the **single** decode path — no duplicate
 "decode a recovered packet" branch (spec §6c/§5c).
 
+The N4R2 profile holds a front gap for about 128 ms, short enough to stay inside
+the playback task's 250 ms PCM prebuffer. A resend that misses that deadline is
+concealed rather than stalling decode long enough to starve I2S.
+
 Per drained packet:
 
 1. `aes_frame_split()` the payload: the largest multiple of 16 is ciphertext, the

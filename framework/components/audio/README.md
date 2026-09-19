@@ -20,9 +20,10 @@ interface (the diagnostic 440 Hz tone is just another producer).
   host-unit-tested (`test/test_audio_drift`). Above the high / below the low mark
   (3/4 and 1/4 of ring capacity) it returns DROP / DUP; `avail == 0` is NONE (the
   underrun silence path owns it, not drift).
-- `src/audio_playback.{h,c}` — playback task: drains the ring into I2S, writes silence
-  on underrun, and applies at most one single-frame drift DROP/DUP (~23 µs) per drain
-  cycle so a multi-hour session never slowly underruns from sender/DAC ppm mismatch.
+- `src/audio_playback.{h,c}` — playback task: prebuffers 250 ms before first output
+  and after an underrun, drains the ring into I2S, writes silence while buffering,
+  and applies at most one single-frame drift DROP/DUP (~23 µs) per drain cycle so a
+  multi-hour session never slowly underruns from sender/DAC ppm mismatch.
 - `src/audio.c` — `audio_init()` (brings up I2S, allocates the ~2 s PSRAM ring, starts
   the playback task pinned to `AUDIO_PIN_CORE`) and `audio_play_pcm()`.
 - `src/audio_diag.c` — 440 Hz diagnostic sine pushed through `audio_play_pcm()`, proving

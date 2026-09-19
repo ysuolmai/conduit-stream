@@ -74,10 +74,10 @@ static const char *TAG = "raop_rtp";
 // fills when loss forces a hold so retransmit has time to land.
 #ifdef CONFIG_CONDUIT_SMALL_MEMORY
 #define REORDER_WINDOW 128
-#define REORDER_HOLD   96       // ~0.75 s hold with the reduced PSRAM profile
+#define REORDER_HOLD   16       // ~128 ms: stays inside the 250 ms PCM prebuffer
 #else
 #define REORDER_WINDOW 256
-#define REORDER_HOLD   192      // conceal after holding ~1.5 s (retransmit RTT ≪ this)
+#define REORDER_HOLD   24       // ~192 ms: allow resend without starving playback
 #endif
 
 // Don't re-request the same front-gap more than this often while a retransmit is in

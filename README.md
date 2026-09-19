@@ -23,7 +23,8 @@ So I built the thing that should exist: a ~$6 microcontroller that *is* the Wi-F
 - RTP reorder + retransmit + a receiver-initiated timing channel; free-run clock with a drift safeguard.
 - **111 host unit tests** for the pure logic (parsers, codecs, buffer math); every build stage verified.
 
-Rough edges (it's an experiment): a debug UDP-log mirror and a couple of diagnostic hooks are still in-tree; artwork is intentionally ignored; multi-room sync is out of scope.
+Rough edges (it's an experiment): a couple of diagnostic hooks are still in-tree;
+artwork is intentionally ignored; multi-room sync is out of scope.
 
 ## How it works
 

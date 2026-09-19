@@ -134,11 +134,9 @@ extern "C" void app_main(void)
         system_led_set_state(LED_ST_WIFI_CONNECTING);   // amber while connecting
         wifi_start(on_got_ip);  // on GOT_IP -> LED blue + mdns_advertise_raop(...)
     } else {
-        // Spec §8: no creds -> one clear line, DO NOT boot-loop. Sit idle; the
-        // 440 Hz tone keeps playing so the device is obviously alive.
-        system_led_set_state(LED_ST_NEEDS_CREDS);        // red: needs credentials
-        ESP_LOGW(TAG, "no Wi-Fi credentials: set CONFIG_CONDUIT_WIFI_SSID (menuconfig) "
-                      "or write nvs 'conduit/wifi_ssid'. Idling; audio path still runs.");
+        system_led_set_state(LED_ST_NEEDS_CREDS);
+        ESP_LOGW(TAG, "no Wi-Fi credentials; starting captive setup portal");
+        wifi_start_provisioning();
     }
 
     ESP_LOGI(TAG, "boot complete.");

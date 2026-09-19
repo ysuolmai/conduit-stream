@@ -16,6 +16,10 @@ typedef void (*wifi_got_ip_cb_t)(void);
 // is present (caller checks system_config_has_credentials()).
 void wifi_start(wifi_got_ip_cb_t on_got_ip);
 
+// Start an open setup AP, captive DNS portal and HTTP configuration page.
+// Used when no SSID exists in NVS. Saving restarts the device into STA mode.
+void wifi_start_provisioning(void);
+
 #ifdef __cplusplus
 }
 #endif

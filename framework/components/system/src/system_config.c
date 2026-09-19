@@ -48,7 +48,15 @@ esp_err_t system_config_init(void) {
     }
     load_or_seed(h, "wifi_ssid", CONFIG_CONDUIT_WIFI_SSID, s_ssid, sizeof(s_ssid));
     load_or_seed(h, "wifi_pass", CONFIG_CONDUIT_WIFI_PASSWORD, s_pass, sizeof(s_pass));
-    load_or_seed(h, "name",      CONFIG_CONDUIT_DEVICE_NAME,  s_name, sizeof(s_name));
+
+    char generated_name[sizeof(s_name)];
+    snprintf(generated_name, sizeof(generated_name), "MiniSpeaker-%s", s_device_id + 9);
+    load_or_seed(h, "name", generated_name, s_name, sizeof(s_name));
+    if (strcmp(s_name, generated_name) != 0) {
+        snprintf(s_name, sizeof(s_name), "%s", generated_name);
+        if (nvs_set_str(h, "name", s_name) == ESP_OK) nvs_commit(h);
+        ESP_LOGI(TAG, "updated device name to '%s'", s_name);
+    }
     nvs_close(h);
 
     device_instance_name_format(s_device_id, s_name, s_instance, sizeof(s_instance));
@@ -63,3 +71,27 @@ const char *system_config_get_name(void)          { return s_name; }
 const char *system_config_get_device_id(void)     { return s_device_id; }
 const char *system_config_get_instance_name(void) { return s_instance; }
 bool        system_config_has_credentials(void)   { return s_ssid[0] != '\0'; }
+
+esp_err_t system_config_save_wifi(const char *ssid, const char *password) {
+    if (!ssid || !password || ssid[0] == '\0' ||
+        strlen(ssid) > 32 || strlen(password) > 63) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+
+    if ((err = nvs_set_str(h, "wifi_ssid", ssid)) == ESP_OK &&
+        (err = nvs_set_str(h, "wifi_pass", password)) == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    nvs_close(h);
+
+    if (err == ESP_OK) {
+        snprintf(s_ssid, sizeof(s_ssid), "%s", ssid);
+        snprintf(s_pass, sizeof(s_pass), "%s", password);
+        ESP_LOGI(TAG, "saved Wi-Fi credentials for SSID '%s'", s_ssid);
+    }
+    return err;
+}

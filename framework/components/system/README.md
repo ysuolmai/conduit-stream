@@ -7,17 +7,16 @@ status, health. The stuff every other component leans on but none of them owns.
 
 `system_config_init()` loads the device configuration:
 
-- **NVS namespace `conduit`**, keys: `wifi_ssid`, `wifi_pass`, `name`
-  (default `"Conduit"`). NVS is the source of truth after first boot.
+- **NVS namespace `conduit`**, keys: `wifi_ssid`, `wifi_pass`, `name`.
+  NVS is the source of truth for Wi-Fi after first boot.
 - **Kconfig seeding** — on first boot each missing key is seeded from
-  `CONFIG_CONDUIT_WIFI_SSID` / `CONFIG_CONDUIT_WIFI_PASSWORD` /
-  `CONFIG_CONDUIT_DEVICE_NAME` (see `Kconfig.projbuild`, set via `menuconfig`)
-  and persisted, so later config changes need no reflash.
+  `CONFIG_CONDUIT_WIFI_SSID` / `CONFIG_CONDUIT_WIFI_PASSWORD` and persisted.
 - **Device id** — derived from the base MAC at boot (e.g. `E83DC1F2AC6C`);
-  **not stored**. The RAOP service instance name is `<deviceid>@<name>`
-  (e.g. `E83DC1F2AC6C@Conduit`).
-- **No creds** — if `wifi_ssid` is empty, `system_config_has_credentials()`
-  returns false; `main` logs one clear line and sits idle (no boot-loop).
+  **not stored**. The visible name is always `MiniSpeaker-XXX`, using the final
+  three MAC digits. The RAOP instance is `<deviceid>@<name>` (for example,
+  `E83DC1F2AC6C@MiniSpeaker-C6C`).
+- **No creds** — the device starts the open `MiniSpeaker-XXX` captive setup AP.
+  The submitted SSID and password are saved to NVS before restart.
 
 Pure string logic (`src/device_id.c`) has zero ESP-IDF deps and is host-tested
 under `pio test -e native`; the NVS/MAC glue (`src/system_config.c`) is verified

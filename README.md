@@ -16,7 +16,7 @@ So I built the thing that should exist: a ~$6 microcontroller that *is* the Wi-F
 
 ## Status
 
-**Works.** An iPhone or Mac discovers *Conduit* on the network, connects, and streams lossless ALAC audio through the DAC into a powered speaker (a Harman Kardon Aura Studio 3, in my case).
+**Works.** An iPhone or Mac discovers the device as *MiniSpeaker-XXX*, connects, and streams lossless ALAC audio through the selected audio board.
 
 - Discovery (mDNS `_raop._tcp`), the RSA `Apple-Challenge` handshake, AES session-key exchange, RTP audio receive, AES-128-CBC decrypt, ALAC decode → PCM → I2S → DAC.
 - Volume (the iOS slider), DAAP track metadata, an RGB status LED.
@@ -67,15 +67,16 @@ Needs [PlatformIO Core](https://platformio.org/install/cli) and the ESP-IDF tool
 
 ```bash
 cd framework
-# Set your Wi-Fi (lands in the gitignored generated sdkconfig, never committed):
-pio run -t menuconfig      #  Conduit Stream → Wi-Fi SSID / Password
 pio run -e esp32-s3-n4r2-pcm5102a     # PCM5102A build
 pio run -e esp32-s3-n4r2-max98357a    # MAX98357A build
 pio run -e esp32-s3-n4r2-pcm5102a -t upload
 pio test -e native                     # run the host unit tests
 ```
 
-Then pick **Conduit** from your device's AirPlay menu and hit play. The firmware is AirPlay 1 (RAOP), so it appears as a normal AirPlay speaker on the same LAN.
+On first boot, join the open **MiniSpeaker-XXX** setup network. The captive page
+lists nearby 2.4 GHz networks; choose one, enter its password, and save. The
+device restarts and the same **MiniSpeaker-XXX** name appears in the AirPlay menu.
+If the captive page does not open automatically, browse to `http://192.168.4.1/`.
 
 ## The interesting part
 
@@ -93,7 +94,7 @@ Four bugs only a real device could surface (build-green + 111 host tests all pas
 |---------|------|
 | 0.0.1 | 440 Hz test tone through the DAC ✅ |
 | 0.1–0.2 | **AirPlay 1 receiver ✅ (this)** |
-| next | Wi-Fi provisioning UX, OTA updates, artwork, a small web UI |
+| next | OTA updates, artwork, a small control UI |
 
 ## Credits
 

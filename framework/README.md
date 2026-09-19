@@ -5,7 +5,7 @@ PCM5102A stereo line-out and MAX98357A mono speaker amplification.
 
 ## Status: N4R2 AirPlay 1 receiver
 
-The firmware discovers as `Conduit` over mDNS, accepts AirPlay 1 audio, decodes
+The firmware discovers as `MiniSpeaker-XXX` over mDNS, accepts AirPlay 1 audio, decodes
 ALAC and sends PCM over I2S. The N4R2 build uses 4 MB flash and 2 MB quad PSRAM.
 
 Covers spec milestones 1-6: PlatformIO project, flashing + serial, flash/PSRAM
@@ -40,8 +40,10 @@ conduit: psram: 2.0 MB (quad)
 conduit: i2s: std TX up @ 44100 Hz, 16-bit stereo (BCLK=12, LRCK=13, DOUT=11, MCLK=unused)
 ```
 
-After Wi-Fi credentials are present, the device advertises `_raop._tcp` and can
-be selected from an iPhone or Mac on the same LAN.
+On first boot, connect a phone to the open `MiniSpeaker-XXX` hotspot and select a
+2.4 GHz network in the captive page. Browse to `http://192.168.4.1/` if the page
+does not open automatically. After saving, the device restarts, advertises
+`_raop._tcp`, and appears under the same `MiniSpeaker-XXX` name in AirPlay.
 
 > Native-USB S3 devkits: if the monitor is blank, the console may be on USB
 > Serial/JTAG. See the commented flags in `platformio.ini` and the note in

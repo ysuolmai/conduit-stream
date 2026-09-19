@@ -44,11 +44,4 @@ menu "Conduit Stream Configuration"
             WPA2 password seeded into NVS on first boot. Empty = open network
             or "no creds" (see SSID).
 
-    config CONDUIT_DEVICE_NAME
-        string "Speaker name shown in the AirPlay menu"
-        default "Conduit"
-        help
-            Seeds the "name" key in NVS; used in the RAOP instance name
-            "<deviceid>@<name>".
-
 endmenu

@@ -17,13 +17,17 @@ esp_err_t   system_config_init(void);
 
 const char *system_config_get_ssid(void);          // "" if unset
 const char *system_config_get_password(void);       // "" if unset
-const char *system_config_get_name(void);           // e.g. "Conduit"
+const char *system_config_get_name(void);           // e.g. "MiniSpeaker-A1B"
 const char *system_config_get_device_id(void);      // e.g. "E83DC1F2AC6C"
-const char *system_config_get_instance_name(void);  // "E83DC1F2AC6C@Conduit"
+const char *system_config_get_instance_name(void);  // "E83DC1F2AC6C@MiniSpeaker-C6C"
 
 // True only when an SSID is present — main uses this to decide whether to bring
 // Wi-Fi up or log the "no creds" message and sit idle (no boot-loop).
 bool        system_config_has_credentials(void);
+
+// Persist credentials in the "conduit" NVS namespace. They take effect after
+// restart; the AirPlay name is always derived from the device MAC.
+esp_err_t   system_config_save_wifi(const char *ssid, const char *password);
 
 #ifdef __cplusplus
 }

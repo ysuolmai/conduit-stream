@@ -1,6 +1,6 @@
 # Conduit Stream
 
-**Turn any powered speaker with an AUX jack into a Wi-Fi AirPlay endpoint — with a ~$6 ESP32-S3 and a PCM5102A DAC.** No WiiM, no cloud, no account. Open, local, self-contained.
+**Turn a powered speaker or passive speaker into a Wi-Fi AirPlay endpoint — with an ESP32-S3 Super Mini N4R2 and either a PCM5102A or MAX98357A.** No WiiM, no cloud, no account. Open, local, self-contained.
 
 > A personal experiment: a from-scratch **AirPlay 1 (RAOP) receiver** on an ESP32-S3, designed, built, and debugged live against a real iPhone and Mac. It's not a product — it's a "can a microcontroller pretend to be an AirPort Express?" experiment. It can.
 
@@ -37,7 +37,8 @@ iPhone / Mac ──mDNS _raop._tcp──▶  discovery/   (advertise service + T
                                      ▼
                                     audio/        (transport-agnostic Playback Manager:
                                      ▼             PSRAM jitter buffer → software volume → I2S)
-                                    PCM5102A ──line level──▶ powered speaker (AUX)
+                                    ┌─ PCM5102A ──line level──▶ powered speaker (AUX)
+                                    └─ MAX98357A ──speaker──▶ passive speaker
 ```
 
 The **Playback Manager stays transport-agnostic**: protocols are plugins that push PCM into a single `audio_play_pcm()` interface. AirPlay is one such plugin; a REST or Bluetooth transport could be another.
@@ -54,11 +55,11 @@ Components (ESP-IDF):
 
 | Part | Detail |
 |------|--------|
-| MCU | ESP32-S3 (N16R8 — 16 MB flash, 8 MB octal PSRAM, native USB-C) |
-| DAC | PCM5102A I2S breakout (GY-PCM5102), 3.5 mm line out |
-| Speaker | Any powered speaker with a 3.5 mm AUX in |
+| MCU | ESP32-S3 Super Mini N4R2 (4 MB flash, 2 MB quad PSRAM, native USB-C) |
+| Audio option A | PCM5102A I2S breakout (line out to a powered speaker) |
+| Audio option B | MAX98357A I2S mono amplifier (directly to a passive speaker) |
 
-Wiring (and the config pins that make the DAC actually produce sound — `SCK→GND`, `XSMT→3.3V`, `FMT→GND`) is in [`framework/docs/WIRING.md`](framework/docs/WIRING.md). **Read it** — a floating `SCK` is silent, and cold solder joints are half of all "dead DAC" reports.
+Wiring for both supported combinations is in [`framework/docs/WIRING.md`](framework/docs/WIRING.md). The two firmware targets use GPIO11 = DIN, GPIO12 = BCLK, GPIO13 = LRCK/LRC.
 
 ## Build & flash
 
@@ -68,12 +69,13 @@ Needs [PlatformIO Core](https://platformio.org/install/cli) and the ESP-IDF tool
 cd framework
 # Set your Wi-Fi (lands in the gitignored generated sdkconfig, never committed):
 pio run -t menuconfig      #  Conduit Stream → Wi-Fi SSID / Password
-pio run -e esp32-s3-n16r8              # build
-pio run -e esp32-s3-n16r8 -t upload    # flash over USB-C
+pio run -e esp32-s3-n4r2-pcm5102a     # PCM5102A build
+pio run -e esp32-s3-n4r2-max98357a    # MAX98357A build
+pio run -e esp32-s3-n4r2-pcm5102a -t upload
 pio test -e native                     # run the host unit tests
 ```
 
-Then pick **Conduit** from your device's AirPlay menu and hit play.
+Then pick **Conduit** from your device's AirPlay menu and hit play. The firmware is AirPlay 1 (RAOP), so it appears as a normal AirPlay speaker on the same LAN.
 
 ## The interesting part
 

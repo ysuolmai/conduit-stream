@@ -1,21 +1,33 @@
-# Conduit Stream - Wiring (v0.0.1)
+# Conduit Stream - Wiring (ESP32-S3 Super Mini N4R2)
 
-ESP32-S3 N16R8  ->  PCM5102A DAC  ->  3.5mm AUX  ->  Harman Kardon Aura Studio 3
+Both supported targets use the same I2S pins. Flash the matching target for the
+audio board you connect; do not connect both boards to the same I2S bus while testing.
+
+| ESP32-S3 N4R2 | Audio board | Signal |
+|---------------|-------------|--------|
+| GPIO11        | DIN         | I2S data out |
+| GPIO12        | BCLK/BCK    | bit clock |
+| GPIO13        | LRC/LRCK/WS | word-select clock |
+| GND           | GND         | common ground |
+
+## PCM5102A: line out to a powered speaker
+
+ESP32-S3 N4R2 -> PCM5102A DAC -> 3.5mm AUX -> powered speaker
 
 The Aura is a *powered* speaker with its own amplifier, and the PCM5102A puts out
 *line level*. So DAC jack -> AUX in is exactly right. No separate amp needed.
 
 ## I2S / power connections
 
-| ESP32-S3 | PCM5102A | Notes |
+| ESP32-S3 N4R2 | PCM5102A | Notes |
 |----------|----------|-------|
-| GPIO5    | DIN      | I2S data out |
-| GPIO6    | BCK      | bit clock |
-| GPIO7    | LRCK     | word clock (a.k.a. LCK / WS) |
+| GPIO11   | DIN      | I2S data out |
+| GPIO12   | BCK      | bit clock |
+| GPIO13   | LRCK     | word clock (a.k.a. LCK / WS) |
 | 5V       | VIN      | breakout has an onboard 3.3V regulator, so 5V is fine; 3.3V also works |
 | GND      | GND      | common ground (required) |
 
-GPIO5/6/7 are safe general-purpose pins on the S3. They are not strapping pins
+GPIO11/12/13 are safe general-purpose pins on the S3. They are not strapping pins
 (those are GPIO0/3/45/46), not the USB pins (GPIO19/20), and not the flash/PSRAM
 pins. If you re-map, avoid those.
 
@@ -35,9 +47,9 @@ purple GY-PCM5102 breakout these are the pads/jumpers on the back:
 We deliberately do **not** wire MCLK. `gpio_cfg.mclk = I2S_GPIO_UNUSED` in the
 firmware, and SCK->GND on the DAC is the matching half of that decision.
 
-## ESP32-S3 N4R2 + MAX98357A
+## MAX98357A: mono amplifier to a passive speaker
 
-The experimental N4R2 target uses the MAX98357A I2S mono amplifier instead of
+The N4R2 MAX98357A target uses the I2S mono amplifier instead of
 the PCM5102A line-out DAC:
 
 | ESP32-S3 | MAX98357A | Notes |
@@ -51,6 +63,11 @@ the PCM5102A line-out DAC:
 Tie `SD/EN` high if the module has no pull-up. Connect the speaker between
 `SPK+` and `SPK-`; neither output is ground-referenced. The firmware mixes
 AirPlay stereo to mono before I2S so a mono amplifier does not lose one side.
+
+Flash targets:
+
+- `esp32-s3-n4r2-pcm5102a` for PCM5102A.
+- `esp32-s3-n4r2-max98357a` for MAX98357A.
 
 ## "Project Gravity" warning
 

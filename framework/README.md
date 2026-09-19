@@ -1,24 +1,21 @@
 # Conduit Stream - firmware
 
-Turn any powered speaker with an AUX input into a modern Wi-Fi audio endpoint,
-built on an ESP32-S3 + PCM5102A DAC instead of buying a WiiM. Open source, no
-cloud, no account, local API, auto-discoverable. Long term this is also the
-embedded platform the "Baby Arlo" robot reuses (Wi-Fi provisioning, OTA, audio
-in/out, discovery, firmware architecture).
+AirPlay 1 (RAOP) receiver for the ESP32-S3 Super Mini N4R2. This fork supports
+PCM5102A stereo line-out and MAX98357A mono speaker amplification.
 
-## Status: v0.0.1 - "hear first audio"
+## Status: N4R2 AirPlay 1 receiver
 
-This build boots the S3, logs chip / flash / PSRAM, brings up I2S, and streams a
-clean 440 Hz sine through the PCM5102A into the Aura Studio 3. No networking yet.
+The firmware discovers as `Conduit` over mDNS, accepts AirPlay 1 audio, decodes
+ALAC and sends PCM over I2S. The N4R2 build uses 4 MB flash and 2 MB quad PSRAM.
 
 Covers spec milestones 1-6: PlatformIO project, flashing + serial, flash/PSRAM
 detection, I2S config, 440 Hz sine, first audio.
 
 ## Wiring first
 
-Do **not** skip [`docs/WIRING.md`](docs/WIRING.md). Your original spec had
-`SCK not connected`, which leaves the DAC silent. It must be `SCK -> GND`, and
-`XSMT -> 3.3V`. Two-minute read, saves a two-hour headache.
+Do **not** skip [`docs/WIRING.md`](docs/WIRING.md). Both targets use GPIO11 = DIN,
+GPIO12 = BCLK and GPIO13 = LRCK/LRC. PCM5102A also needs `SCK -> GND` and
+`XSMT -> 3.3V`; MAX98357A needs `SD/EN` high and a differential speaker load.
 
 ## Build / flash / listen
 
@@ -26,26 +23,25 @@ Prereqs: [PlatformIO Core](https://platformio.org/install/cli) (`pip install pla
 or the PlatformIO VS Code extension.
 
 ```bash
-cd firmware
-pio run                 # first build pulls the toolchain + ESP-IDF (few min)
-pio run -t upload       # flash the S3 over USB-C
+cd framework
+pio run -e esp32-s3-n4r2-pcm5102a
+pio run -e esp32-s3-n4r2-max98357a
+pio run -e esp32-s3-n4r2-pcm5102a -t upload
 pio device monitor      # 115200 baud
 ```
 
 Expected serial output:
 
 ```
-conduit: Conduit Stream  |  firmware v0.0.1
+conduit: Conduit Stream  |  AirPlay 1 / N4R2
 conduit: chip: esp32s3, 2 core(s), silicon rev vX.Y
-conduit: flash: 16.0 MB
-conduit: psram: 8.0 MB (octal)
-conduit: i2s: std TX up @ 44100 Hz, 16-bit stereo (BCLK=6, LRCK=7, DOUT=5, MCLK=unused)
-conduit: tone: emitting 440 Hz sine (both channels)
+conduit: flash: 4.0 MB
+conduit: psram: 2.0 MB (quad)
+conduit: i2s: std TX up @ 44100 Hz, 16-bit stereo (BCLK=12, LRCK=13, DOUT=11, MCLK=unused)
 ```
 
-...and a 440 Hz tone (an "A") out of the Aura. If the log looks like that but the
-Aura is silent, it is hardware/config, not firmware. Run the silence checklist in
-`docs/WIRING.md`.
+After Wi-Fi credentials are present, the device advertises `_raop._tcp` and can
+be selected from an iPhone or Mac on the same LAN.
 
 > Native-USB S3 devkits: if the monitor is blank, the console may be on USB
 > Serial/JTAG. See the commented flags in `platformio.ini` and the note in
@@ -55,9 +51,9 @@ Aura is silent, it is hardware/config, not firmware. Run the silence checklist i
 
 ```
 firmware/
-  platformio.ini        # ESP32-S3 N16R8, ESP-IDF framework
-  sdkconfig.defaults    # 16MB QIO flash + 8MB octal PSRAM
-  src/main.cpp          # v0.0.1 boot diagnostics + I2S sine tone
+  platformio.ini        # N4R2 PCM5102A and MAX98357A environments
+  sdkconfig.defaults.*  # per-output flash/PSRAM/I2S settings
+  src/main.cpp          # Wi-Fi, mDNS, RAOP and audio startup
   components/
     audio/              # Playback Manager, PCM buffer, I2S driver (transport-agnostic)
     network/            # Wi-Fi + transport plugins (AirPlay, REST, BT, DLNA)
@@ -68,10 +64,8 @@ firmware/
   hardware/             # BOM + wiring
 ```
 
-The `components/*` folders are real but empty ESP-IDF components for now, so the
-architecture is in place and the project still builds. The design rule from the
-spec holds: the Playback Manager stays transport-agnostic and protocols are
-plugins that feed it PCM.
+The Playback Manager stays transport-agnostic; RAOP feeds decoded PCM into the
+same PSRAM-backed audio path for both output boards.
 
 ## Roadmap (from the Vision doc)
 

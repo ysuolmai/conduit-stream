@@ -34,9 +34,10 @@ esp_err_t raop_crypto_init(void) {
 
     mbedtls_pk_context pk;
     mbedtls_pk_init(&pk);
-    // mbedTLS 4.0 signature: (ctx, key, keylen, pwd, pwdlen). keylen INCLUDES the NUL for PEM.
+    // ESP-IDF 5.5 uses the mbedTLS 3.x signature, including RNG callbacks.
+    // keylen INCLUDES the NUL for PEM.
     int rc = mbedtls_pk_parse_key(&pk, (const unsigned char *)raop_key_pem, raop_key_pem_len,
-                                  NULL, 0);
+                                  NULL, 0, NULL, NULL);
     if (rc != 0) {
         ESP_LOGE(TAG, "pk_parse_key: -0x%04x (embedded key corrupt?)", (unsigned)(-rc));
         mbedtls_pk_free(&pk);

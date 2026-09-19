@@ -553,11 +553,12 @@ void raop_server_start(void) {
     }
     // NB: called from the wifi GOT_IP handler (sys_evt task, small stack). Do NO
     // heavy work here — just spawn the server task. Crypto init (RSA-2048) runs
-    // inside server_task on its 16 KB stack; the RTSP handlers also do per-request
-    // RSA sign/decrypt, so the task stack must accommodate mbedTLS bignum ops.
+    // inside server_task on its large stack; the RTSP handlers also do per-request
+    // RSA sign/decrypt. Performance optimization increases mbedTLS inlining and
+    // measured stack use, so keep 32 KB of internal RAM reserved for this task.
     raop_session_reset(&s_session);
     s_running = true;
-    if (xTaskCreate(server_task, "raop_rtsp", 16384, NULL, 5, &s_task) != pdPASS) {
+    if (xTaskCreate(server_task, "raop_rtsp", 32768, NULL, 5, &s_task) != pdPASS) {
         ESP_LOGE(TAG, "xTaskCreate(raop_rtsp) failed");
         s_running = false;
         s_task = NULL;

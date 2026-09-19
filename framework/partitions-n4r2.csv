@@ -1,4 +1,5 @@
-# 4 MB N4R2 partition table. Two small OTA slots are retained for later OTA work.
+# 4 MB N4R2 partition table. Keep the established dual app layout so existing
+# devices retain the same application address and USB updates can preserve NVS.
 # Name,     Type, SubType, Offset,   Size,    Flags
 nvs,        data, nvs,     0x9000,   0x6000,
 otadata,   data, ota,     0xf000,   0x2000,

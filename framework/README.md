@@ -49,8 +49,7 @@ AirPlay. On later boots it connects directly; SoftAP and HTTP remain off.
 Release BOOT after power-up, then hold it for 3 seconds to reboot into the setup
 portal for one boot. This does not erase the saved SSID/password. Saving new
 credentials replaces them; rebooting without saving returns to the old network.
-The same page can install the matching `*-ota.bin` release file while preserving
-Wi-Fi settings.
+Firmware updates use USB flashing; the setup HTTP server only handles Wi-Fi.
 
 If the saved network does not provide an IP address within 15 seconds after
 boot, firmware automatically reboots into that same one-shot setup portal. It
@@ -78,7 +77,6 @@ firmware/
     audio/              # Playback Manager, PCM buffer, I2S driver (transport-agnostic)
     network/            # Wi-Fi + transport plugins (AirPlay, REST, BT, DLNA)
     mdns/               # discovery
-    ota/                # over-the-air updates
     system/             # boot, config/NVS, logging, LED status
   docs/                 # WIRING.md and future protocol notes
   hardware/             # BOM + wiring
@@ -94,7 +92,7 @@ same PSRAM-backed audio path for both output boards.
 | 0.0.1   | 440 Hz test tone through the DAC (**this build**) |
 | 0.1     | receive PCM audio over Wi-Fi and play it |
 | 0.2     | AirPlay receiver |
-| 1.0     | standalone endpoint: AirPlay, REST API, OTA, mDNS, web UI, optional BT |
+| 1.0     | standalone endpoint: AirPlay, mDNS, Wi-Fi setup UI |
 
 ## Software stack
 

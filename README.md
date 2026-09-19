@@ -81,8 +81,8 @@ one, enter its password, and save. The device restarts and the same
 not open automatically, browse to `http://192.168.4.1/`.
 
 Once configured, boot goes directly to the saved network: SoftAP, DNS and HTTP
-stay off during normal AirPlay operation. To reconfigure Wi-Fi or update the
-firmware, release BOOT after power-up, then hold BOOT for 3 seconds. The device
+stay off during normal AirPlay operation. To reconfigure Wi-Fi, release BOOT
+after power-up, then hold BOOT for 3 seconds. The device
 restarts into the setup network for that boot only. Existing Wi-Fi credentials
 remain intact unless **Save and restart** is pressed, so leaving the portal or
 power-cycling without saving returns to the old network.
@@ -91,9 +91,8 @@ If a saved network does not produce an IP address within 15 seconds, the device
 also reboots into the setup SoftAP instead of retrying forever. The saved SSID
 and password are still retained until new settings are explicitly saved.
 
-The setup page also accepts a firmware upload. Use the `*-ota.bin` matching the
-connected audio board. A successful update preserves the NVS partition and its
-saved Wi-Fi credentials.
+The setup page only changes Wi-Fi settings. Firmware updates are performed over
+USB; no HTTP firmware uploader runs on the device.
 
 ## Firmware downloads
 
@@ -101,14 +100,15 @@ Each version tag triggers one GitHub Actions run that builds both supported
 variants and publishes one GitHub Release containing:
 
 - `minispeaker-esp32s3-n4r2-pcm5102a.bin`
-- `minispeaker-esp32s3-n4r2-pcm5102a-ota.bin`
+- `minispeaker-esp32s3-n4r2-pcm5102a-app.bin`
 - `minispeaker-esp32s3-n4r2-max98357a.bin`
-- `minispeaker-esp32s3-n4r2-max98357a-ota.bin`
+- `minispeaker-esp32s3-n4r2-max98357a-app.bin`
 - `SHA256SUMS`
 
-The two files without `-ota` are merged images for USB flashing at address
-`0x0`. The `-ota.bin` files contain only the application and are exclusively for
-the setup page; do not interchange PCM5102A and MAX98357A variants.
+The files without `-app` are merged images for an initial USB flash at address
+`0x0`. The `-app.bin` files contain only the application for USB updates at
+`0x20000`, preserving NVS Wi-Fi settings. Do not interchange PCM5102A and
+MAX98357A variants.
 
 ## Onboard LEDs
 

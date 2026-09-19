@@ -1,5 +1,4 @@
 #include "wifi.h"
-#include "ota_update.h"
 #include "system_config.h"
 
 #include "esp_http_server.h"
@@ -21,15 +20,6 @@
 #define DNS_PORT 53
 #define MAX_SCAN_RESULTS 16
 #define FORM_BODY_MAX 384
-#define OTA_BUFFER_SIZE 4096
-
-#ifdef CONFIG_CONDUIT_MONO_OUTPUT
-#define AUDIO_TARGET "MAX98357A"
-#define OTA_FILENAME "minispeaker-esp32s3-n4r2-max98357a-ota.bin"
-#else
-#define AUDIO_TARGET "PCM5102A"
-#define OTA_FILENAME "minispeaker-esp32s3-n4r2-pcm5102a-ota.bin"
-#endif
 
 static const char *TAG = "wifi_setup";
 static wifi_ap_record_t s_scan_results[MAX_SCAN_RESULTS];
@@ -48,9 +38,7 @@ static const char PAGE_HEAD[] =
     "height:48px;margin-top:24px;border:0;border-radius:6px;background:#1769aa;"
     "color:#fff;font:600 16px system-ui;cursor:pointer}button:disabled{opacity:.55;cursor:default}"
     "small{display:block;color:#697782;margin-top:7px}.name{font-weight:700;color:#182026}"
-    "section{border-top:1px solid #d8dee4;margin-top:32px;padding-top:26px}h2{font-size:20px;"
-    "margin:0 0 8px}input[type=file]{height:auto;padding:11px}progress{width:100%;height:12px;"
-    "margin-top:14px}.result{min-height:24px;margin-top:10px;color:#33414d}</style></head><body><main>";
+    "</style></head><body><main>";
 
 static const char PAGE_WIFI_FORM_END[] =
     "</select><label for=manual>Other network</label>"
@@ -58,22 +46,7 @@ static const char PAGE_WIFI_FORM_END[] =
     "<small>Use this only when the network is hidden or not listed.</small>"
     "<label for=pass>Wi-Fi password</label>"
     "<input id=pass name=pass type=password maxlength=63 autocomplete=current-password>"
-    "<button type=submit>Save and restart</button></form>"
-    "<section><h2>Firmware update</h2>";
-
-static const char PAGE_OTA_CONTROLS[] =
-    "<input id=firmware type=file accept=\".bin,application/octet-stream\">"
-    "<button id=upload type=button onclick=uploadFirmware()>Upload and restart</button>"
-    "<progress id=progress value=0 max=100 hidden></progress><div id=result class=result></div>"
-    "<script>function uploadFirmware(){const f=document.getElementById('firmware').files[0],"
-    "b=document.getElementById('upload'),p=document.getElementById('progress'),"
-    "r=document.getElementById('result');if(!f){r.textContent='Choose an OTA firmware file.';return;}"
-    "b.disabled=true;p.hidden=false;p.value=0;r.textContent='Uploading...';const x=new XMLHttpRequest();"
-    "x.open('POST','/update');x.setRequestHeader('Content-Type','application/octet-stream');"
-    "x.upload.onprogress=e=>{if(e.lengthComputable)p.value=Math.round(e.loaded*100/e.total)};"
-    "x.onload=()=>{r.textContent=x.responseText;if(x.status!==200)b.disabled=false};"
-    "x.onerror=()=>{r.textContent='Upload failed.';b.disabled=false};x.send(f)}</script>"
-    "</section></main></body></html>";
+    "<button type=submit>Save and restart</button></form></main></body></html>";
 
 static esp_err_t send_text(httpd_req_t *req, const char *text) {
     return httpd_resp_send_chunk(req, text, HTTPD_RESP_USE_STRLEN);
@@ -137,13 +110,6 @@ static esp_err_t portal_get_handler(httpd_req_t *req) {
     }
 
     if (send_text(req, PAGE_WIFI_FORM_END) != ESP_OK) return ESP_FAIL;
-    char ota_details[384];
-    snprintf(ota_details, sizeof(ota_details),
-             "<p>This unit uses <span class=name>%s</span>. Select the matching "
-             "<span class=name>%s</span> release file. Wi-Fi settings are preserved.</p>",
-             AUDIO_TARGET, OTA_FILENAME);
-    if (send_text(req, ota_details) != ESP_OK ||
-        send_text(req, PAGE_OTA_CONTROLS) != ESP_OK) return ESP_FAIL;
     return httpd_resp_send_chunk(req, NULL, 0);
 }
 
@@ -188,13 +154,6 @@ static bool form_value(const char *body, const char *key, char *out, size_t out_
 
 static esp_err_t send_error(httpd_req_t *req, const char *message) {
     httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_set_type(req, "text/plain; charset=utf-8");
-    return httpd_resp_sendstr(req, message);
-}
-
-static esp_err_t send_update_error(httpd_req_t *req, const char *status,
-                                   const char *message) {
-    httpd_resp_set_status(req, status);
     httpd_resp_set_type(req, "text/plain; charset=utf-8");
     return httpd_resp_sendstr(req, message);
 }
@@ -245,77 +204,6 @@ static esp_err_t save_post_handler(httpd_req_t *req) {
         "<title>Saved</title><style>body{font:18px system-ui;margin:40px;color:#182026}</style>"
         "<h1>Settings saved</h1><p>MiniSpeaker is restarting and will join your Wi-Fi.</p>");
     xTaskCreate(restart_task, "setup_restart", 2048, NULL, 5, NULL);
-    return ESP_OK;
-}
-
-static int receive_upload_data(httpd_req_t *req, uint8_t *buffer, size_t length) {
-    size_t received = 0;
-    while (received < length) {
-        int result = httpd_req_recv(req, (char *)buffer + received, length - received);
-        if (result == HTTPD_SOCK_ERR_TIMEOUT) continue;
-        if (result <= 0) return result;
-        received += (size_t)result;
-    }
-    return (int)received;
-}
-
-static esp_err_t update_post_handler(httpd_req_t *req) {
-    size_t image_size = req->content_len;
-    size_t max_size = ota_update_max_size();
-    if (image_size == 0 || max_size == 0 || image_size > max_size) {
-        return send_update_error(req, "400 Bad Request",
-                                 "Firmware is empty or too large for the OTA slot.");
-    }
-
-    uint8_t *buffer = malloc(OTA_BUFFER_SIZE);
-    if (!buffer) {
-        return send_update_error(req, "500 Internal Server Error",
-                                 "Not enough memory to start the update.");
-    }
-
-    size_t first_length = image_size < OTA_BUFFER_SIZE ? image_size : OTA_BUFFER_SIZE;
-    if (receive_upload_data(req, buffer, first_length) <= 0) {
-        free(buffer);
-        return ESP_FAIL;
-    }
-    esp_err_t err = ota_update_validate_image_header(buffer, first_length);
-    if (err != ESP_OK) {
-        free(buffer);
-        return send_update_error(req, "400 Bad Request",
-                                 "Invalid OTA image. Upload the matching *-ota.bin release file.");
-    }
-
-    ota_update_t update = {0};
-    err = ota_update_begin(&update, image_size);
-    if (err == ESP_OK) err = ota_update_write(&update, buffer, first_length);
-    size_t received = first_length;
-
-    while (err == ESP_OK && received < image_size) {
-        size_t chunk = image_size - received;
-        if (chunk > OTA_BUFFER_SIZE) chunk = OTA_BUFFER_SIZE;
-        int result = receive_upload_data(req, buffer, chunk);
-        if (result <= 0) {
-            err = ESP_FAIL;
-            break;
-        }
-        err = ota_update_write(&update, buffer, (size_t)result);
-        received += (size_t)result;
-    }
-    free(buffer);
-
-    if (err == ESP_OK) err = ota_update_finish(&update);
-    if (err != ESP_OK) {
-        ota_update_abort(&update);
-        ESP_LOGE(TAG, "OTA update failed after %u/%u bytes: %s", (unsigned)received,
-                 (unsigned)image_size, esp_err_to_name(err));
-        return send_update_error(req, "500 Internal Server Error",
-                                 "Firmware update failed; the current firmware is unchanged.");
-    }
-
-    ESP_LOGI(TAG, "OTA update complete (%u bytes); restarting", (unsigned)image_size);
-    httpd_resp_set_type(req, "text/plain; charset=utf-8");
-    httpd_resp_sendstr(req, "Update complete. MiniSpeaker is restarting.");
-    xTaskCreate(restart_task, "ota_restart", 2048, NULL, 5, NULL);
     return ESP_OK;
 }
 
@@ -396,7 +284,7 @@ static void scan_networks(void) {
 static void start_web_server(void) {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 6144;
-    config.max_uri_handlers = 5;
+    config.max_uri_handlers = 4;
     config.uri_match_fn = httpd_uri_match_wildcard;
 
     httpd_handle_t server = NULL;
@@ -407,14 +295,10 @@ static void start_web_server(void) {
     const httpd_uri_t root = {
         .uri = "/", .method = HTTP_GET, .handler = portal_get_handler, .user_ctx = NULL
     };
-    const httpd_uri_t update = {
-        .uri = "/update", .method = HTTP_POST, .handler = update_post_handler, .user_ctx = NULL
-    };
     const httpd_uri_t catch_all = {
         .uri = "/*", .method = HTTP_GET, .handler = portal_get_handler, .user_ctx = NULL
     };
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &save));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &update));
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &root));
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &catch_all));
 }

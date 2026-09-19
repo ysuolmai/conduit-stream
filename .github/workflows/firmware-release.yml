@@ -29,7 +29,7 @@ jobs:
             -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.n4r2-pcm5102a"
             build &&
             cd build-pcm5102a &&
-            cp firmware.bin ../../minispeaker-esp32s3-n4r2-pcm5102a-ota.bin &&
+            cp firmware.bin ../../minispeaker-esp32s3-n4r2-pcm5102a-app.bin &&
             esptool.py --chip esp32s3 merge_bin --format raw
             -o ../../minispeaker-esp32s3-n4r2-pcm5102a.bin $(cat flash_args) &&
             cd .. &&
@@ -38,14 +38,14 @@ jobs:
             -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.n4r2-max98357a"
             build &&
             cd build-max98357a &&
-            cp firmware.bin ../../minispeaker-esp32s3-n4r2-max98357a-ota.bin &&
+            cp firmware.bin ../../minispeaker-esp32s3-n4r2-max98357a-app.bin &&
             esptool.py --chip esp32s3 merge_bin --format raw
             -o ../../minispeaker-esp32s3-n4r2-max98357a.bin $(cat flash_args) &&
             cd ../.. &&
             sha256sum minispeaker-esp32s3-n4r2-pcm5102a.bin
-            minispeaker-esp32s3-n4r2-pcm5102a-ota.bin
+            minispeaker-esp32s3-n4r2-pcm5102a-app.bin
             minispeaker-esp32s3-n4r2-max98357a.bin
-            minispeaker-esp32s3-n4r2-max98357a-ota.bin > SHA256SUMS
+            minispeaker-esp32s3-n4r2-max98357a-app.bin > SHA256SUMS
 
       - name: Upload firmware bundle
         uses: actions/upload-artifact@v6
@@ -53,9 +53,9 @@ jobs:
           name: minispeaker-esp32s3-n4r2-firmware
           path: |
             minispeaker-esp32s3-n4r2-pcm5102a.bin
-            minispeaker-esp32s3-n4r2-pcm5102a-ota.bin
+            minispeaker-esp32s3-n4r2-pcm5102a-app.bin
             minispeaker-esp32s3-n4r2-max98357a.bin
-            minispeaker-esp32s3-n4r2-max98357a-ota.bin
+            minispeaker-esp32s3-n4r2-max98357a-app.bin
             SHA256SUMS
 
       - name: Publish GitHub Release
@@ -65,9 +65,9 @@ jobs:
         run: >
           gh release create "${GITHUB_REF_NAME}"
           minispeaker-esp32s3-n4r2-pcm5102a.bin
-          minispeaker-esp32s3-n4r2-pcm5102a-ota.bin
+          minispeaker-esp32s3-n4r2-pcm5102a-app.bin
           minispeaker-esp32s3-n4r2-max98357a.bin
-          minispeaker-esp32s3-n4r2-max98357a-ota.bin
+          minispeaker-esp32s3-n4r2-max98357a-app.bin
           SHA256SUMS
           --repo "${GITHUB_REPOSITORY}"
           --title "MiniSpeaker N4R2 ${GITHUB_REF_NAME}"

@@ -9,8 +9,10 @@ interface (the diagnostic 440 Hz tone is just another producer).
 
 - `include/audio.h` — public API: `audio_init()`, `audio_play_pcm()`, `audio_diag_tone_start()`.
 - `src/audio_ringbuf.{h,c}` — pure-C single-producer/single-consumer PCM ring buffer
-  (host-unit-tested via `pio test -e native`). Indices have no memory barriers, so
-  producer and consumer MUST share a core — see the precondition in the header.
+  (host-unit-tested via `pio test -e native`). Wrapped reads/writes use at most two
+  bulk `memcpy` calls rather than per-frame copies and modulo operations. Indices
+  have no memory barriers, so producer and consumer MUST share a core — see the
+  precondition in the header.
   Phase 4 adds two consumer-side primitives, `audio_ringbuf_drop()` /
   `audio_ringbuf_last_frame()`, used by the drift step (tail-only / index-only, so
   the SPSC contract is preserved).

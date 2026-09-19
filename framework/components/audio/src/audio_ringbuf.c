@@ -1,4 +1,5 @@
 #include "audio_ringbuf.h"
+#include <string.h>
 
 void audio_ringbuf_init(audio_ringbuf_t *rb, int16_t *storage, size_t capacity_frames) {
     rb->storage  = storage;
@@ -8,7 +9,9 @@ void audio_ringbuf_init(audio_ringbuf_t *rb, int16_t *storage, size_t capacity_f
 }
 
 size_t audio_ringbuf_available(const audio_ringbuf_t *rb) {
-    return (rb->head - rb->tail + rb->capacity) % rb->capacity;
+    size_t head = rb->head;
+    size_t tail = rb->tail;
+    return head >= tail ? head - tail : rb->capacity - tail + head;
 }
 
 size_t audio_ringbuf_free_space(const audio_ringbuf_t *rb) {
@@ -19,29 +22,47 @@ size_t audio_ringbuf_free_space(const audio_ringbuf_t *rb) {
 size_t audio_ringbuf_write(audio_ringbuf_t *rb, const int16_t *frames, size_t n_frames) {
     size_t space = audio_ringbuf_free_space(rb);
     if (n_frames > space) n_frames = space;
-    for (size_t i = 0; i < n_frames; i++) {
-        rb->storage[rb->head * 2]     = frames[i * 2];
-        rb->storage[rb->head * 2 + 1] = frames[i * 2 + 1];
-        rb->head = (rb->head + 1) % rb->capacity;
+    if (n_frames == 0) return 0;
+
+    size_t head = rb->head;
+    size_t first = rb->capacity - head;
+    if (first > n_frames) first = n_frames;
+    memcpy(rb->storage + head * 2, frames, first * 2 * sizeof(int16_t));
+    if (n_frames > first) {
+        memcpy(rb->storage, frames + first * 2,
+               (n_frames - first) * 2 * sizeof(int16_t));
     }
+    head += n_frames;
+    if (head >= rb->capacity) head -= rb->capacity;
+    rb->head = head;
     return n_frames;
 }
 
 size_t audio_ringbuf_read(audio_ringbuf_t *rb, int16_t *out, size_t n_frames) {
     size_t avail = audio_ringbuf_available(rb);
     if (n_frames > avail) n_frames = avail;
-    for (size_t i = 0; i < n_frames; i++) {
-        out[i * 2]     = rb->storage[rb->tail * 2];
-        out[i * 2 + 1] = rb->storage[rb->tail * 2 + 1];
-        rb->tail = (rb->tail + 1) % rb->capacity;
+    if (n_frames == 0) return 0;
+
+    size_t tail = rb->tail;
+    size_t first = rb->capacity - tail;
+    if (first > n_frames) first = n_frames;
+    memcpy(out, rb->storage + tail * 2, first * 2 * sizeof(int16_t));
+    if (n_frames > first) {
+        memcpy(out + first * 2, rb->storage,
+               (n_frames - first) * 2 * sizeof(int16_t));
     }
+    tail += n_frames;
+    if (tail >= rb->capacity) tail -= rb->capacity;
+    rb->tail = tail;
     return n_frames;
 }
 
 size_t audio_ringbuf_drop(audio_ringbuf_t *rb, size_t n) {
     size_t avail = audio_ringbuf_available(rb);
     if (n > avail) n = avail;
-    rb->tail = (rb->tail + n) % rb->capacity;   // consumer-side: advance tail only
+    size_t tail = rb->tail + n;
+    if (tail >= rb->capacity) tail -= rb->capacity;
+    rb->tail = tail;                            // consumer-side: advance tail only
     return n;
 }
 

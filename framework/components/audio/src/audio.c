@@ -12,12 +12,10 @@
 #include <stdlib.h>   // abort()
 #include <stdatomic.h>
 
-// Keep the normal two-second jitter buffer, but reduce it on 2 MB PSRAM boards.
-#ifdef CONFIG_CONDUIT_SMALL_MEMORY
-#define RING_CAPACITY_FRAMES AUDIO_SAMPLE_RATE_HZ
-#else
+// Two seconds of stereo PCM is ~353 KB. Together with the reduced 128-slot RTP
+// reorder window this fits comfortably in 2 MB PSRAM and prevents decoder
+// backpressure from stalling UDP receive during sender bursts.
 #define RING_CAPACITY_FRAMES (AUDIO_SAMPLE_RATE_HZ * 2)
-#endif
 
 static const char     *TAG = "audio";
 static audio_ringbuf_t s_ring;

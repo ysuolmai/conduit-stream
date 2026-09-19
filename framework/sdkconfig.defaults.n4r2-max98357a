@@ -13,7 +13,8 @@ CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions-n4r2.csv"
 
-# Reduce the two largest audio buffers for the 2 MB PSRAM target.
+# Keep the RTP reorder window compact for the 2 MB PSRAM target. The PCM ring
+# remains two seconds because bulk copies make it cheap and it absorbs bursts.
 CONFIG_CONDUIT_SMALL_MEMORY=y
 
 # I2S: ESP32 GPIO11 -> MAX98357A DIN, GPIO12 -> BCLK, GPIO13 -> LRC/WS.

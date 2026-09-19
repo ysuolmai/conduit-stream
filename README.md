@@ -78,6 +78,18 @@ lists nearby 2.4 GHz networks; choose one, enter its password, and save. The
 device restarts and the same **MiniSpeaker-XXX** name appears in the AirPlay menu.
 If the captive page does not open automatically, browse to `http://192.168.4.1/`.
 
+## Firmware downloads
+
+Each version tag triggers one GitHub Actions run that builds both supported
+variants and publishes one GitHub Release containing:
+
+- `minispeaker-esp32s3-n4r2-pcm5102a.bin`
+- `minispeaker-esp32s3-n4r2-max98357a.bin`
+- `SHA256SUMS`
+
+Download the file matching the connected audio board from the repository's
+Releases page. Each file is a merged image intended to be flashed at address 0.
+
 ## The interesting part
 
 AirPlay 1 authenticates the *receiver* by making it RSA-sign Apple's challenge with the AirPort Express private key — extracted from the hardware in 2004 and shipped in every open receiver (shairport) since. Apple never rotated it, because AirPlay 1 is frozen. This firmware embeds that same public-knowledge key; that's the whole trust model.

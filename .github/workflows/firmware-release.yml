@@ -1,0 +1,66 @@
+name: Build and release N4R2 firmware
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Build both N4R2 firmware variants
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5
+          target: esp32s3
+          command: >
+            cd framework &&
+            idf.py -B build-pcm5102a
+            -DSDKCONFIG=sdkconfig.pcm5102a.generated
+            -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.n4r2-pcm5102a"
+            build &&
+            cd build-pcm5102a &&
+            esptool.py --chip esp32s3 merge_bin --format raw
+            -o ../../minispeaker-esp32s3-n4r2-pcm5102a.bin $(cat flash_args) &&
+            cd .. &&
+            idf.py -B build-max98357a
+            -DSDKCONFIG=sdkconfig.max98357a.generated
+            -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.n4r2-max98357a"
+            build &&
+            cd build-max98357a &&
+            esptool.py --chip esp32s3 merge_bin --format raw
+            -o ../../minispeaker-esp32s3-n4r2-max98357a.bin $(cat flash_args) &&
+            cd ../.. &&
+            sha256sum minispeaker-esp32s3-n4r2-pcm5102a.bin
+            minispeaker-esp32s3-n4r2-max98357a.bin > SHA256SUMS
+
+      - name: Upload firmware bundle
+        uses: actions/upload-artifact@v6
+        with:
+          name: minispeaker-esp32s3-n4r2-firmware
+          path: |
+            minispeaker-esp32s3-n4r2-pcm5102a.bin
+            minispeaker-esp32s3-n4r2-max98357a.bin
+            SHA256SUMS
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "${GITHUB_REF_NAME}"
+          minispeaker-esp32s3-n4r2-pcm5102a.bin
+          minispeaker-esp32s3-n4r2-max98357a.bin
+          SHA256SUMS
+          --repo "${GITHUB_REPOSITORY}"
+          --title "MiniSpeaker N4R2 ${GITHUB_REF_NAME}"
+          --generate-notes

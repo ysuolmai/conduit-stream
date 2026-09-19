@@ -16,7 +16,8 @@ run and an SSID is present):
 - **Events** (via `esp_event`): `WIFI_EVENT_STA_START` -> connect;
   `WIFI_EVENT_STA_DISCONNECTED` -> reconnect with a capped exponential backoff
   (500 ms doubling to 8 s); `IP_EVENT_STA_GOT_IP` -> log the IP, reset backoff,
-  and fire the registered `wifi_got_ip_cb_t` (main uses it to start mDNS).
+  and dispatch the registered `wifi_got_ip_cb_t` once on a dedicated 8 KB task.
+  mDNS and AirPlay initialization never run on ESP-IDF's small `sys_evt` stack.
 - **Boot fallback** — if the initial connection has not obtained an IPv4 address
   within 15 seconds, main stores a one-shot setup request and reboots. The next
   boot opens the captive SoftAP without erasing the saved credentials.

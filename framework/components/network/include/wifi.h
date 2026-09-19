@@ -7,8 +7,9 @@
 extern "C" {
 #endif
 
-// Invoked (once per acquisition) from the Wi-Fi event task when an IPv4 address
-// is obtained. main uses it to start mDNS. Keep the callback short & non-blocking.
+// Invoked once from a dedicated 8 KB task after the first IPv4 address is
+// obtained. main uses it to start mDNS and AirPlay without consuming sys_evt's
+// small stack.
 typedef void (*wifi_got_ip_cb_t)(void);
 
 // Bring up station mode and start connecting. `on_got_ip` may be NULL.
